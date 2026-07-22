@@ -2,9 +2,14 @@
 // Ranked viral-product feed — a subtab under the Store surface. Seeds from the
 // screen cache for instant paint, then refetches. Picking a product writes the
 // owned catalog + supplier link and generates a draft store.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, Btn, Pan, Pill, Placeholder, TableSkeleton } from "../ui";
+import {
+  OrderSortHeader,
+  nextSortState,
+  useSortedRowsEntrance,
+} from "./OrderListFamily";
 import { cachedScreenData, cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
   fetchDiscover,
@@ -19,11 +24,65 @@ function scoreTone(score: number): "success" | "warn" | "neutral" {
   return score >= 70 ? "success" : score >= 40 ? "warn" : "neutral";
 }
 
+/** The feed arrives already ranked by the nightly sourcing run, which is the
+ *  default and has no column of its own — the header cycle returns to it on a
+ *  column's third click. */
+const DEFAULT_DISCOVER_SORT = { sort: "default", dir: "desc" } as const;
+
+type DiscoverItem = DiscoverState["items"][number];
+
+function compareDiscover(
+  a: DiscoverItem,
+  b: DiscoverItem,
+  sort: string,
+  dir: "asc" | "desc",
+): number {
+  const mul = dir === "asc" ? 1 : -1;
+  // Title is the tiebreak on every column so equal-valued rows keep one stable
+  // order rather than whatever the previous sort left behind.
+  const byTitle = a.title.localeCompare(b.title);
+  switch (sort) {
+    case "product":
+      return mul * byTitle;
+    case "virality":
+      return mul * (a.score - b.score) || byTitle;
+    case "cost":
+      return mul * (a.unitCostCents - b.unitCostCents) || byTitle;
+    case "suggested":
+      return mul * (a.suggestedRetailCents - b.suggestedRetailCents) || byTitle;
+    case "margin":
+      return mul * (a.marginPct - b.marginPct) || byTitle;
+    default:
+      return 0;
+  }
+}
+
 export default function Discover({ app }: { app: DashboardCtx }) {
   const [data, setData] = useState<DiscoverState | null>(() =>
     cachedScreenData<DiscoverState>(SCREEN_CACHE_KEYS.discover),
   );
   const [picking, setPicking] = useState<string | null>(null);
+  const [sortState, setSortState] = useState<{ sort: string; dir: "asc" | "desc" }>(
+    DEFAULT_DISCOVER_SORT,
+  );
+
+  const shown = useMemo(() => {
+    const items = data?.items ?? [];
+    if (sortState.sort === "default") return items;
+    return [...items].sort((a, b) => compareDiscover(a, b, sortState.sort, sortState.dir));
+  }, [data, sortState]);
+
+  const headerSort = {
+    sort: sortState.sort,
+    dir: sortState.dir,
+    onSort: (col: string) => setSortState((cur) => nextSortState(cur, col, DEFAULT_DISCOVER_SORT)),
+  };
+
+  const listRef = useRef<HTMLDivElement>(null);
+  useSortedRowsEntrance(listRef, shown.map((it) => it.sourceProductId).join("|"), [
+    data,
+    sortState,
+  ]);
 
   useEffect(() => {
     let live = true;
@@ -76,14 +135,15 @@ export default function Discover({ app }: { app: DashboardCtx }) {
         <Card pad={false}>
           <Pan min={640}>
           <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
-            <span>Product</span>
-            <span>Virality</span>
-            <span>Cost</span>
-            <span>Suggested</span>
-            <span>Margin</span>
+            <OrderSortHeader label="Product" col="product" {...headerSort} />
+            <OrderSortHeader label="Virality" col="virality" {...headerSort} />
+            <OrderSortHeader label="Cost" col="cost" {...headerSort} />
+            <OrderSortHeader label="Suggested" col="suggested" {...headerSort} />
+            <OrderSortHeader label="Margin" col="margin" {...headerSort} />
             <span />
           </div>
-          {data.items.map((it) => (
+          <div ref={listRef}>
+          {shown.map((it) => (
             <div key={it.sourceProductId} className="cd-trow" style={{ gridTemplateColumns: GRID }}>
               <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 {it.imageUrl && (
@@ -121,6 +181,7 @@ export default function Discover({ app }: { app: DashboardCtx }) {
               </span>
             </div>
           ))}
+          </div>
           </Pan>
         </Card>
       )}
