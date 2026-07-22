@@ -5690,9 +5690,10 @@ button.cd-alert-row:hover { background: color-mix(in oklch, var(--gray-bg) 68%, 
   .cd-auth-card { padding: 26px 20px 22px; border-radius: 14px; }
   .cd-auth-title { font-size: calc(21px * var(--type-scale)); }
 }
-/* Account chooser: one row per remembered account — the big button switches,
-   the small × forgets. Row is a flex pair (two sibling forms) because the
-   remove control cannot nest inside the switch form. */
+/* Account chooser: one row per remembered account — the big control enters
+   (button = live one-click switch; link = signed-out email-prefill), the
+   small × forgets. Row is a flex pair (two siblings) because the remove
+   control cannot nest inside the switch form. */
 .cd-auth-accounts { display: flex; flex-direction: column; gap: 8px; margin: 0 0 4px; }
 .cd-auth-account { display: flex; align-items: stretch; gap: 6px; }
 .cd-auth-account-form { flex: 1; min-width: 0; display: flex; }
@@ -5700,10 +5701,14 @@ button.cd-alert-row:hover { background: color-mix(in oklch, var(--gray-bg) 68%, 
   display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; box-sizing: border-box;
   font: inherit; text-align: left; color: var(--text-1); background: var(--card-solid);
   border: 1px solid var(--hairline-strong); border-radius: 12px; padding: 10px 12px;
-  cursor: pointer; letter-spacing: -0.006em;
+  cursor: pointer; letter-spacing: -0.006em; text-decoration: none;
   transition: background 0.14s ease, border-color 0.14s ease, transform 0.12s ease;
 }
 .cd-auth-account-btn:hover { background: var(--gray-bg); border-color: var(--text-3); }
+.cd-auth-account-status {
+  flex-shrink: 0; margin-left: auto; font-size: calc(11px * var(--type-scale));
+  font-weight: 600; color: var(--text-3); letter-spacing: 0.02em;
+}
 .cd-auth-account-btn:active { transform: scale(0.985); }
 .cd-auth-account-btn > svg { flex-shrink: 0; color: var(--text-3); margin-left: auto; }
 .cd-auth-account-avatar {

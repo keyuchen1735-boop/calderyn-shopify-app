@@ -4,12 +4,11 @@
 // owns credentials, rate limits, and session minting; this page owns the UI
 // and the friendly error states (?error= codes set by that action). When the
 // device has remembered accounts (see lib/auth/remembered-accounts.server),
-// they render as one-click cards above the credential form.
+// they render as cards above the credential form: live sessions one-click in,
+// signed-out ones prefill the email.
 import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { useEffect, useRef } from "react";
-import { gsap } from "gsap";
 import dashboard from "~/styles/dashboard.css?url";
 import {
   AuthShell,
@@ -21,7 +20,7 @@ import {
   GoogleButton,
   ShopifyButton,
 } from "~/components/auth/AuthCard";
-import { CDIcon } from "~/components/dashboard/icons";
+import { AccountChooser } from "~/components/auth/AccountChooser";
 import { safeDashboardReturnTo, publicBaseUrl } from "~/lib/dashboard/http.server";
 import { getSessionFromRequest } from "~/lib/dashboard/session.server";
 import {
@@ -43,10 +42,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return redirect(safeDashboardReturnTo(url.searchParams.get("return_to")) ?? "/dashboard");
   }
 
-  // Accounts previously signed in on this device, resolved server-side (email
-  // + store name come from the live session rows, never from the cookie).
-  // Dead entries are pruned via the rewrite header. Resolution is best-effort:
-  // a DB hiccup must not take down the sign-in page itself.
+  // Accounts previously used on this device, resolved server-side (email +
+  // store name come from the session rows, never from the cookie). Entries
+  // whose row vanished are pruned via the rewrite header. Resolution is
+  // best-effort: a DB hiccup must not take down the sign-in page itself.
   let accounts: RememberedAccount[] = [];
   let accountsCookie: string | null = null;
   try {
@@ -71,83 +70,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
   );
 }
 
-function AccountChooser({
-  accounts,
-  returnTo,
-}: {
-  accounts: RememberedAccount[];
-  returnTo: string | null;
-}) {
-  const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!listRef.current) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const cards = listRef.current.querySelectorAll(".cd-auth-account");
-    const tween = gsap.from(cards, {
-      opacity: 0,
-      y: 10,
-      duration: 0.4,
-      ease: "power2.out",
-      stagger: 0.06,
-      clearProps: "all",
-    });
-    return () => {
-      tween.kill();
-    };
-  }, []);
-
-  return (
-    <div className="cd-auth-accounts" ref={listRef}>
-      {accounts.map((a) => {
-        const subtitle = a.email ?? a.storeDomain;
-        return (
-          <div className="cd-auth-account" key={a.sid}>
-            <form method="post" action="/dashboard/api/switch-account" className="cd-auth-account-form">
-              <input type="hidden" name="sid" value={a.sid} />
-              {returnTo ? <input type="hidden" name="return_to" value={returnTo} /> : null}
-              <button type="submit" className="cd-auth-account-btn">
-                <span className="cd-auth-account-avatar" aria-hidden>
-                  {(a.storeName || "C").slice(0, 1).toUpperCase()}
-                </span>
-                <span className="cd-auth-account-meta">
-                  <span className="cd-auth-account-store">{a.storeName}</span>
-                  {subtitle ? <span className="cd-auth-account-email">{subtitle}</span> : null}
-                </span>
-                <CDIcon name="chevronRight" size={16} />
-              </button>
-            </form>
-            <form method="post" action="/dashboard/api/switch-account">
-              <input type="hidden" name="sid" value={a.sid} />
-              <input type="hidden" name="intent" value="remove" />
-              {returnTo ? <input type="hidden" name="return_to" value={returnTo} /> : null}
-              <button
-                type="submit"
-                className="cd-auth-account-remove"
-                aria-label={`Remove ${a.storeName} from this device`}
-                title="Remove from this device"
-              >
-                <CDIcon name="x" size={14} />
-              </button>
-            </form>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 export default function LoginPage() {
   const { error, notice, email, returnTo, authBase, accounts } = useLoaderData<typeof loader>();
   const hasAccounts = accounts.length > 0;
+  // A signed-out card links back here with ?email= — hide that account's own
+  // card in that view (it would only repeat the prefilled form beside it).
+  const visibleAccounts = email ? accounts.filter((a) => a.email !== email) : accounts;
   return (
     <AuthShell>
       <h1 className="cd-auth-title">Sign in</h1>
-      <p className="cd-auth-sub">{hasAccounts ? "Pick an account to continue." : "Welcome back."}</p>
+      <p className="cd-auth-sub">
+        {hasAccounts && !email ? "Pick an account to continue." : "Welcome back."}
+      </p>
       <AuthError code={error} />
       <AuthNotice notice={notice} />
-      {hasAccounts ? (
+      {visibleAccounts.length > 0 ? (
         <>
-          <AccountChooser accounts={accounts} returnTo={returnTo} />
+          <AccountChooser accounts={visibleAccounts} returnTo={returnTo} page="/login" />
           <div className="cd-auth-divider">or sign in another way</div>
         </>
       ) : null}
@@ -166,12 +105,12 @@ export default function LoginPage() {
           required
           autoComplete="email"
           defaultValue={email}
-          autoFocus={!hasAccounts}
+          autoFocus={!hasAccounts && !email}
         />
         <label className="cd-auth-label" htmlFor="password">
           Password
         </label>
-        <PasswordField id="password" autoComplete="current-password" />
+        <PasswordField id="password" autoComplete="current-password" autoFocus={Boolean(email)} />
         {returnTo ? <input type="hidden" name="return_to" value={returnTo} /> : null}
         <AuthSubmit label="Sign in" pendingLabel="Signing in…" />
       </AuthForm>
