@@ -492,22 +492,25 @@ export default function Customers({ app }: { app: DashboardCtx }) {
   // cron silently skips the shop. Migrate it to the manual default once,
   // the first time the Weather tab is viewed.
   const healedRef = useRef(false);
+  const navSub = app.nav.sub;
+  const guardrails = app.guardrails;
+  const refresh = app.refresh;
   useEffect(() => {
     if (
-      app.nav.sub === "weather" &&
+      navSub === "weather" &&
       !healedRef.current &&
-      app.guardrails &&
-      app.guardrails.weather_sensitivity === 0
+      guardrails &&
+      guardrails.weather_sensitivity === 0
     ) {
       healedRef.current = true;
       putGuardrails({ weather_sensitivity: sensitivityForMode("manual", 0) })
-        .then(() => app.refresh())
+        .then(() => refresh())
         .catch(() => {
           // Surface next interaction; the toggle write path reports errors.
           healedRef.current = false;
         });
     }
-  });
+  }, [navSub, guardrails, refresh]);
 
   const onWeatherMode = async (next: WeatherMode) => {
     const prev = wxModeOverride;
