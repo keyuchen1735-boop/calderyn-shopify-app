@@ -216,13 +216,20 @@ async function buildSignals(
     console.error("[radar] google signal failed", err);
   }
   try {
+    // Exclude the partial current UTC day (same boundary as the traffic tile
+    // above) and split the remaining 14 complete days into two equal 7-day
+    // buckets: `day >= cut` is the last 7 days, everything older is the week
+    // before. Counting today would make hitsLast7 span 8 days and blend a
+    // partial day into a number the tile presents as a full week.
+    const today = new Date().toISOString().slice(0, 10);
     const since = new Date(Date.now() - 14 * DAY_MS).toISOString().slice(0, 10);
     const cut = new Date(Date.now() - 7 * DAY_MS).toISOString().slice(0, 10);
     const { data, error } = await sb
       .from("seo_ai_crawl_daily")
       .select("day, hits")
       .eq("shop_id", shopId)
-      .gte("day", since);
+      .gte("day", since)
+      .lt("day", today);
     if (error) throw new Error(error.message);
     for (const r of (data ?? []) as Array<{ day: string; hits: number }>) {
       if (r.day >= cut) signals.aiAssistants.hitsLast7 += r.hits;
