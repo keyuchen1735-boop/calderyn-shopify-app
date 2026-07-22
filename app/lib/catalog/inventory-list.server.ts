@@ -3,6 +3,7 @@
 // plus the restock-presence decorator that surfaces Autopilot's recent
 // create_po_draft activity next to the matching low/out rows.
 import { getSupabase } from "../supabase.server";
+import type { InventorySortKey } from "./inventory-sort";
 
 /** Wire shape of one inventory_list RPC row (snake_case, straight from SQL). */
 interface InventoryListRpcRow {
@@ -72,7 +73,14 @@ export function escapeLike(s: string): string {
 
 export async function listInventory(
   shopId: string,
-  opts: { search?: string; stock?: "low" | "out"; limit?: number; offset?: number } = {},
+  opts: {
+    search?: string;
+    stock?: "low" | "out";
+    limit?: number;
+    offset?: number;
+    sort?: InventorySortKey;
+    dir?: "asc" | "desc";
+  } = {},
 ): Promise<{ rows: InventoryRow[]; total: number }> {
   const { data, error } = await getSupabase().rpc("inventory_list", {
     p_shop_id: shopId,
@@ -80,6 +88,10 @@ export async function listInventory(
     p_stock: opts.stock ?? null,
     p_limit: Math.min(opts.limit ?? 50, 100),
     p_offset: Math.max(0, opts.offset ?? 0),
+    // A sort key without a direction would match none of the RPC's CASE arms
+    // and silently fall back to the default order, so pair them or send neither.
+    p_sort: opts.sort ?? null,
+    p_dir: opts.sort ? (opts.dir === "asc" ? "asc" : "desc") : null,
   });
   if (error) throw error;
   const raw = (data ?? []) as InventoryListRpcRow[];

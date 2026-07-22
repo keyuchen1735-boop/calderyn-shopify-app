@@ -10,6 +10,7 @@
 import { runBulkInChunks } from "./orders-client";
 import type { LiveAnalyticsSnapshot } from "./live-analytics-types";
 import type { CatalogSort } from "~/lib/catalog/catalog-sort";
+import type { InventorySortKey } from "~/lib/catalog/inventory-sort";
 import type { SeoListingVM } from "~/lib/catalog/types";
 import type {
   ListingDraftCurrent,
@@ -2001,12 +2002,24 @@ export interface InventoryRowVM {
   restock: { auditId: string; createdAt: string; outcome: string } | null;
 }
 export async function fetchInventoryList(
-  opts: { search?: string; stock?: "low" | "out"; offset?: number } = {},
+  opts: {
+    search?: string;
+    stock?: "low" | "out";
+    offset?: number;
+    sort?: InventorySortKey;
+    dir?: "asc" | "desc";
+  } = {},
 ): Promise<{ rows: InventoryRowVM[]; total: number }> {
   const params = new URLSearchParams();
   if (opts.search) params.set("search", opts.search);
   if (opts.stock) params.set("stock", opts.stock);
   if (opts.offset) params.set("offset", String(opts.offset));
+  // Omitting sort leaves the list on the RPC's default order, so dir alone is
+  // never sent — it would have nothing to apply to.
+  if (opts.sort) {
+    params.set("sort", opts.sort);
+    params.set("dir", opts.dir === "asc" ? "asc" : "desc");
+  }
   const qs = params.toString();
   return apiGet<{ rows: InventoryRowVM[]; total: number }>(
     `/dashboard/api/catalog/inventory${qs ? `?${qs}` : ""}`,

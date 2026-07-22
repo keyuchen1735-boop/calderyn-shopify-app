@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
@@ -14,7 +14,15 @@ export interface OrderListView {
 /** Sort keys whose first click reads most naturally ascending (text columns, A-Z); every other
  *  key (dates, money) starts at newest/biggest first. Shared by every screen that renders
  *  OrderSortHeader so the same-named column never sorts in opposite first directions. */
-const ASC_FIRST_SORT_COLS = new Set(["customer", "order", "title", "name", "location", "segment"]);
+const ASC_FIRST_SORT_COLS = new Set([
+  "customer",
+  "order",
+  "title",
+  "name",
+  "location",
+  "segment",
+  "product",
+]);
 
 /** State transition for a column-header click, shared by the unified list and the sub-lists so
  *  the policy can't drift: a new column sorts by its natural first direction; the active column
@@ -32,6 +40,87 @@ export function nextSortState(
     return { sort: col, dir: naturalDir === "asc" ? "desc" : "asc" };
   }
   return defaults;
+}
+
+/** Which row the entrance should start animating from, given the previously
+ *  animated signature and the new one.
+ *
+ *  A "load more" page appends to the rows already on screen. Replaying the
+ *  entrance across the whole list would re-animate everything the merchant is
+ *  already reading, and since the stagger grows with the list, page 3 of a long
+ *  catalog would ripple for seconds. An append extends the previous signature,
+ *  which is how it is told apart from a re-sort (same rows, new order) or a
+ *  filter change (different rows): on an append only the new tail rises, and
+ *  everything else animates in full.
+ *
+ *  Pure and exported for tests — the alternative is asserting on GSAP targets. */
+export function entranceStartIndex(previous: string | null, signature: string): number {
+  if (previous === null || previous === "") return 0;
+  if (!signature.startsWith(`${previous}|`)) return 0;
+  return previous.split("|").length;
+}
+
+/**
+ * Staggered row rise for a list table, replayed on loads, filter switches and
+ * re-sorts. Shared so every sortable list gets the same entrance and the same
+ * two hardening rules, which are easy to get subtly wrong per-screen:
+ *
+ * - `revertOnUpdate` plus explicit from/to values, so back-to-back sort clicks
+ *   stay clean. A `from()` started mid-tween would capture the half-faded state
+ *   as its target and leave rows stuck dim.
+ * - a row-signature guard, so a replay only happens when the rows actually
+ *   moved. Without it the mount revalidation that merely confirms the cached
+ *   page, or a sort flip where every visible value ties, would flash the list
+ *   for no reason.
+ *
+ * `signature` should identify the visible rows in order (typically their ids
+ * joined). `deps` are the state changes allowed to trigger a replay — pass the
+ * data, the view filter and the sort state, but deliberately not the search
+ * text: replaying the entrance on every keystroke makes the list flicker while
+ * typing.
+ */
+export function useSortedRowsEntrance(
+  ref: RefObject<HTMLElement>,
+  signature: string,
+  deps: unknown[],
+) {
+  const animatedKey = useRef<string | null>(null);
+  useGSAP(
+    () => {
+      if (!ref.current) {
+        // The list DOM went away (a detail view replaced it): forget the last
+        // entrance so returning to the list animates again.
+        animatedKey.current = null;
+        return;
+      }
+      if (reduced()) return;
+      const rows = ref.current.querySelectorAll<HTMLElement>(".cd-trow");
+      if (!rows.length) {
+        animatedKey.current = null;
+        return;
+      }
+      if (animatedKey.current === signature) return;
+      const previous = animatedKey.current;
+      animatedKey.current = signature;
+
+      const targets = Array.from(rows).slice(entranceStartIndex(previous, signature));
+      if (!targets.length) return;
+
+      gsap.fromTo(
+        targets,
+        { autoAlpha: 0, y: 6 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.25,
+          stagger: 0.02,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        },
+      );
+    },
+    { dependencies: deps, scope: ref, revertOnUpdate: true },
+  );
 }
 
 function csvCell(value: string | number | null): string {

@@ -5,8 +5,15 @@ import {
   OrderListTable,
   OrderListToolbar,
   OrderPageReadout,
+  OrderSortHeader,
+  nextSortState,
+  useSortedRowsEntrance,
   type OrderListView,
 } from "./OrderListFamily";
+import {
+  DEFAULT_INVENTORY_SORT,
+  parseInventorySort,
+} from "~/lib/catalog/inventory-sort";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
@@ -57,6 +64,9 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [openRow, setOpenRow] = useState<client.InventoryRowVM | null>(null);
   const [savingQty, setSavingQty] = useState<string | null>(null);
+  const [sortState, setSortState] = useState<{ sort: string; dir: "asc" | "desc" }>(
+    DEFAULT_INVENTORY_SORT,
+  );
 
   // Debounce the search box so each keystroke doesn't fire a request.
   const [query, setQuery] = useState("");
@@ -67,15 +77,23 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
 
   const stockParam = stock === "all" ? undefined : stock;
 
+  // Ordering runs in the RPC, not here: the list is paged, so sorting the loaded
+  // rows would answer "highest on hand" with "highest among the first page".
+  // undefined means the default ordering, which no column represents.
+  const sortParam = parseInventorySort(sortState.sort);
+
   // Latest filter identity, read after an async load to detect a filter change
-  // that happened while the request was in flight. Updated every render.
-  const filterToken = JSON.stringify([query, stock]);
+  // that happened while the request was in flight. Updated every render. The
+  // sort belongs in here too — it re-queries from offset 0, so a page that
+  // lands from the previous ordering must not append to the new one.
+  const filterToken = JSON.stringify([query, stock, sortState.sort, sortState.dir]);
   const filterRef = useRef(filterToken);
   filterRef.current = filterToken;
 
-  // Only the default state (no search, "all" stock) seeds/writes the cache —
-  // a filtered view is live-fetch-only so it never poisons the seeded default.
-  const isDefault = !query && stock === "all";
+  // Only the default state (no search, "all" stock, default ordering) seeds and
+  // writes the cache — any other view is live-fetch-only so it never poisons the
+  // seeded default the screen paints from on return visits.
+  const isDefault = !query && stock === "all" && !sortParam;
 
   // Shared by the filter-change effect and the drawer-close refresh, so both
   // paths run the exact same fetch + cache rules.
@@ -93,7 +111,12 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
       setLoading(!cached);
       setError(null);
       client
-        .fetchInventoryList({ search: query || undefined, stock: stockParam })
+        .fetchInventoryList({
+          search: query || undefined,
+          stock: stockParam,
+          sort: sortParam,
+          dir: sortState.dir,
+        })
         .then((r) => {
           if (isDefault) cacheScreenData(SCREEN_CACHE_KEYS.inventoryList, r);
           if (signal && !signal.alive) return;
@@ -108,7 +131,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
           if (!signal || signal.alive) setLoading(false);
         });
     },
-    [query, stockParam, isDefault],
+    [query, stockParam, isDefault, sortParam, sortState.dir],
   );
 
   useEffect(() => {
@@ -128,12 +151,17 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         search: query || undefined,
         stock: stockParam,
         offset,
+        // Must match the ordering the loaded rows came back in — the offset is
+        // only meaningful against the same sort.
+        sort: sortParam,
+        dir: sortState.dir,
       });
       // The merchant changed the filter mid-flight: discard this page so stale
       // rows from the old filter don't append to the new list.
       if (filterRef.current !== token) return;
-      // De-dupe by variant id: the list is ordered by on-hand, which a
-      // concurrent stock edit can shift, so a paged-in row may already be shown.
+      // De-dupe by variant id: a concurrent stock edit can shift a row across
+      // the page boundary under any of the stock-derived orderings, so a
+      // paged-in row may already be shown.
       setRows((cur) => {
         const base = cur ?? [];
         const seen = new Set(base.map((x) => x.variantId));
@@ -200,6 +228,27 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
   const filtered = Boolean(query) || stock !== "all";
   const shown = rows ?? [];
 
+  // Header click policy shared with the Orders/Customers/Products tables: a new
+  // column sorts its natural way (Product A-Z, the numeric columns highest
+  // first), the active column flips, and a third click returns to the list's
+  // default lowest-stock-first ordering, which has no column of its own.
+  const headerSort = {
+    sort: sortState.sort,
+    dir: sortState.dir,
+    onSort: (col: string) =>
+      setSortState((cur) => nextSortState(cur, col, DEFAULT_INVENTORY_SORT)),
+  };
+
+  // Staggered row rise on loads, filter switches and re-sorts, scoped to this
+  // table. Search keystrokes are excluded (the debounced query is not a
+  // dependency) so the list doesn't flicker while typing.
+  const listRef = useRef<HTMLDivElement>(null);
+  useSortedRowsEntrance(listRef, shown.map((r) => r.variantId).join("|"), [
+    rows,
+    stock,
+    sortState,
+  ]);
+
   // Same header anatomy as Orders: h1, then the stat readout strip. Stock
   // counts are page-scoped (like Orders' "Page value"/"Page alerts"). Kept
   // mounted with last-known values during a reload — unmounting it would shift
@@ -242,6 +291,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
           filterLabel="Stock"
         />
 
+        <div ref={listRef}>
         <OrderListTable
           loading={loading}
           error={error}
@@ -256,11 +306,14 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
           filteredSub="Try a different search or stock filter."
           headers={
             <>
-              <span>Product</span>
-              <span>On hand</span>
-              <span>Reserved</span>
-              <span>Available</span>
-              <span>Status</span>
+              <OrderSortHeader label="Product" col="product" {...headerSort} />
+              <OrderSortHeader label="On hand" col="on_hand" {...headerSort} />
+              <OrderSortHeader label="Reserved" col="reserved" {...headerSort} />
+              <OrderSortHeader label="Available" col="available" {...headerSort} />
+              <OrderSortHeader label="Status" col="status" {...headerSort} />
+              {/* Autopilot carries the restock-draft badge, which is attached to
+                  the rows after the page query rather than being a column the
+                  RPC can order by — so it stays a plain header. */}
               <span>Autopilot</span>
               <span />
             </>
@@ -380,6 +433,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               );
             })}
         </OrderListTable>
+        </div>
       </Card>
 
       {!loading && !error && rows && rows.length < total && (
