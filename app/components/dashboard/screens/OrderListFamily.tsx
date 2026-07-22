@@ -3,7 +3,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
 import { CDIcon } from "../icons";
-import { Btn, Pan, Placeholder, TableSkeleton } from "../ui";
+import { Btn, Pan, Placeholder, Refetch, TableSkeleton } from "../ui";
 import { reduced } from "../hero/hero-motion";
 
 export interface OrderListView {
@@ -448,7 +448,9 @@ export function OrderListTable({
         <div className="cd-tablehd" style={{ gridTemplateColumns: columns }}>
           {headers}
         </div>
-        {children}
+        {/* Filter/sort/page changes keep the last rows on screen while the
+            re-query runs — dim them so the click visibly registered. */}
+        <Refetch active={loading}>{children}</Refetch>
       </Pan>
     </div>
   );

@@ -1,5 +1,5 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { Card, Btn, CountMoney, Segmented, Placeholder } from "../ui";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Card, Btn, CountMoney, Refetch, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { money } from "../format";
 import { DashboardApiError, startIntegrationConnect } from "~/lib/dashboard/client";
@@ -342,15 +342,21 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
   const [data, setData] = useState<CommerceAnalytics | null>(seeded);
   const [loading, setLoading] = useState(() => !seeded);
   const [error, setError] = useState<string | null>(null);
+  // Readable from the fetch callbacks without re-arming the effect per response.
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const toast = app.toast;
 
   // The 7d/14d/30d segment re-queries the endpoint — the window is aggregated
-  // server-side, not sliced client-side.
+  // server-side, not sliced client-side. While the re-query runs the previous
+  // window's numbers stay on screen dimmed (see <Refetch> below) instead of
+  // silently sitting there until the swap.
   useEffect(() => {
     let alive = true;
     const key = analyticsCacheKey(RANGE_DAYS[range]);
     const cached = cachedScreenData<CommerceAnalytics>(key);
     if (cached) setData(cached);
-    setLoading(!cached);
+    setLoading(true);
     setError(null);
     fetchCommerceAnalytics(RANGE_DAYS[range])
       .then((res) => {
@@ -360,9 +366,12 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
       })
       .catch((err: unknown) => {
         if (!alive) return;
-        setError(
-          err instanceof DashboardApiError ? err.message : "Couldn't load analytics.",
-        );
+        const msg =
+          err instanceof DashboardApiError ? err.message : "Couldn't load analytics.";
+        // With a previous window still on screen, a failed refresh downgrades
+        // to a toast — nuking the whole screen for it would lose good data.
+        if (dataRef.current) toast(msg, "warn", "critical");
+        else setError(msg);
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -370,7 +379,24 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
     return () => {
       alive = false;
     };
-  }, [range]);
+  }, [range, toast]);
+
+  // After first paint, warm the windows the merchant hasn't opened yet so
+  // flipping the segmented control swaps instantly instead of round-tripping.
+  const warmed = useRef(false);
+  useEffect(() => {
+    if (loading || !data || warmed.current) return;
+    warmed.current = true;
+    for (const days of Object.values(RANGE_DAYS)) {
+      const key = analyticsCacheKey(days);
+      if (cachedScreenData<CommerceAnalytics>(key)) continue;
+      fetchCommerceAnalytics(days)
+        .then((res) => cacheScreenData(key, res))
+        .catch(() => {
+          /* best-effort warmup — the on-demand fetch above still covers it */
+        });
+    }
+  }, [loading, data]);
 
   // The Performance / Live switch lives in the sidebar rail. Header actions
   // stay present in every state (loading / error / loaded).
@@ -424,11 +450,27 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
 
   if (view === "pnl") return <OperatingPnl />;
 
-  if (loading) {
+  const rangeSwitch = (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+      {loading && data && <span className="cd-spinner" role="status" aria-label="Updating" />}
+      <Segmented
+        small
+        value={range}
+        onChange={(v) => setRange(v as Range)}
+        options={["7d", "14d", "30d"]}
+      />
+    </span>
+  );
+
+  // Full-screen skeleton only before the first payload ever lands — a range
+  // switch keeps the previous window on screen (dimmed via <Refetch>) so the
+  // chips never vanish mid-click.
+  if (loading && !data) {
     return (
       <div className="cd-screen">
         <ScreenHeader title="Analytics" sub="Loading sales, sessions and conversion…">
           {viewSwitch}
+          {rangeSwitch}
         </ScreenHeader>
         <Card pad={false}>
           <Placeholder icon="chart" title="Loading analytics" sub="Reading orders, sessions and channel mix." />
@@ -440,7 +482,10 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
   if (error || !data) {
     return (
       <div className="cd-screen">
-        <ScreenHeader title="Analytics">{viewSwitch}</ScreenHeader>
+        <ScreenHeader title="Analytics">
+          {viewSwitch}
+          {rangeSwitch}
+        </ScreenHeader>
         <Card pad={false}>
           <Placeholder icon="warn" title="Couldn't load analytics" sub={error ?? "No data returned."} />
         </Card>
@@ -471,14 +516,10 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
     <div className="cd-screen">
       <ScreenHeader title="Analytics" sub="Sales, sessions and channels across your store.">
         {viewSwitch}
-        <Segmented
-          small
-          value={range}
-          onChange={(v) => setRange(v as Range)}
-          options={["7d", "14d", "30d"]}
-        />
+        {rangeSwitch}
       </ScreenHeader>
 
+      <Refetch active={loading} className="cd-refetch-wrap">
       {zeroData ? (
         <Card pad={false}>
           <Placeholder
@@ -684,6 +725,7 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
       </Card>
       </>
       )}
+      </Refetch>
     </div>
   );
 }

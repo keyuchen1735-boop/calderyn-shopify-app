@@ -2268,6 +2268,10 @@
 .cd-dot3 i { width: 10px; height: 10px; border-radius: 50%; display: block; }
 .cd-url { flex: 1; text-align: center; font-size: calc(12px * var(--type-scale)); color: var(--text-3); background: var(--card-solid); border-radius: 7px; padding: 4px 12px; max-width: 280px; margin: 0 auto; }
 
+/* Refetch wrapper: transparent to a flex-column parent — mirrors its stacking
+   gap so wrapped sections keep their spacing while they dim during a re-query. */
+.cd-refetch-wrap { display: flex; flex-direction: column; gap: inherit; min-width: 0; }
+
 /* ---- generic tables ---- */
 .cd-tablehd, .cd-trow { display: grid; align-items: center; gap: 12px; padding: calc(9px * var(--density)) 16px; }
 .cd-tablehd { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-3); }
