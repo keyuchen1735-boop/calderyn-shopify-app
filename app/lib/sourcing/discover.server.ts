@@ -46,19 +46,22 @@ interface FeedRow {
 }
 
 /** Global read: ranked feed (source_product join latest score + supplier). */
-export async function listDiscoverFeed(limit = 40): Promise<DiscoverFeedItem[]> {
+export async function listDiscoverFeed(limit = 40, search = ""): Promise<DiscoverFeedItem[]> {
   const { data, error } = await getSupabase()
     .from("source_product_score")
     .select(
       "score, source_product:source_product_id(id, title, category, image_urls, unit_cost_cents, lead_time_days, supplier:supplier_id(name, reliability_score))",
     )
     .order("score", { ascending: false })
-    .limit(limit);
+    .limit(search ? 200 : limit);
   if (error) throw error;
 
+  const terms = search.toLowerCase().split(/\s+/).filter((term) => term.length > 2);
   return ((data ?? []) as unknown as FeedRow[]).flatMap((row) => {
     const p = row.source_product;
     if (!p) return [];
+    const haystack = `${p.title} ${p.category ?? ""}`.toLowerCase();
+    if (terms.length && !terms.some((term) => haystack.includes(term))) return [];
     const retail = suggestedRetailCents(p.unit_cost_cents);
     const item: DiscoverFeedItem = {
       sourceProductId: String(p.id),
@@ -74,7 +77,7 @@ export async function listDiscoverFeed(limit = 40): Promise<DiscoverFeedItem[]> 
       score: Number(row.score),
     };
     return [item];
-  });
+  }).slice(0, limit);
 }
 
 /** Pick: write owned product + media + link, then route the refreshed catalog

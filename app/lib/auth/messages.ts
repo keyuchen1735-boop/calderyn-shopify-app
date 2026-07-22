@@ -25,6 +25,8 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   invalid_shop: "Enter your store's .myshopify.com domain, like example.myshopify.com.",
   invalid_phone: "Enter a valid phone number so we can reach you.",
   invalid_referral: "Pick how you heard about us.",
+  select_product: "Choose at least one product to add.",
+  product_import_failed: "We couldn't add those products just now. Try again.",
   save_failed: "We couldn't save that just now. Try again.",
   not_first_party: "That action isn't available on this account.",
 };

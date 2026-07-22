@@ -1,10 +1,11 @@
 // app/routes/dashboard.onboarding.tsx
-// Post-signup onboarding for first-party (email/Google) users, in two steps run
+// Post-signup onboarding for first-party (email/Google) users, in three steps run
 // before the dashboard on every path:
 //   1. contact - optional phone (skippable) + required "how did you hear about us"
 //   2. import  - bring a Shopify store over, or explicitly skip
-// Only step 2 marks the user onboarded (onboarded_at), so the session gate in
-// session.server holds the user here until the import step is answered. A
+//   3. products - if import is skipped, find dropshipping products to add
+// Only the final choice marks the user onboarded (onboarded_at), so the session gate in
+// session.server holds the user here until the catalog path is answered. A
 // validated return_to is threaded through so a flow interrupted by the gate
 // resumes at its original destination.
 import type { ActionFunctionArgs, LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
@@ -29,6 +30,8 @@ import {
   completeOnboarding,
   getOnboardingProgress,
 } from "~/lib/auth/onboarding.server";
+import { listDiscoverFeed, pickProduct } from "~/lib/sourcing/discover.server";
+import type { DiscoverFeedItem } from "~/lib/sourcing/types";
 import { AuthShell, AuthError, AuthForm, AuthSubmit } from "~/components/auth/AuthCard";
 
 export const meta: MetaFunction = () => [{ title: "Almost there - Calderyn" }];
@@ -38,9 +41,16 @@ function nextAfterOnboarding(emailVerified: boolean): string {
   return emailVerified ? "/dashboard" : "/dashboard/verify-needed";
 }
 
-function onboardingHref(returnTo: string | null, error?: string | null): string {
+function onboardingHref(
+  returnTo: string | null,
+  error?: string | null,
+  step?: "products",
+  selling?: string,
+): string {
   const parts: string[] = [];
   if (error) parts.push(`error=${encodeURIComponent(error)}`);
+  if (step) parts.push(`step=${step}`);
+  if (selling) parts.push(`selling=${encodeURIComponent(selling)}`);
   if (returnTo) parts.push(`return_to=${encodeURIComponent(returnTo)}`);
   return parts.length ? `/dashboard/onboarding?${parts.join("&")}` : "/dashboard/onboarding";
 }
@@ -58,11 +68,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
   const url = new URL(request.url);
   const { contactDone } = await getOnboardingProgress(session.userId);
-  const step: "contact" | "import" = contactDone ? "import" : "contact";
+  const selling = url.searchParams.get("selling")?.trim().slice(0, 80) ?? "";
+  const step: "contact" | "import" | "products" = contactDone
+    ? url.searchParams.get("step") === "products"
+      ? "products"
+      : "import"
+    : "contact";
   return {
     step,
     error: url.searchParams.get("error"),
     returnTo: safeDashboardReturnTo(url.searchParams.get("return_to")),
+    selling,
+    products: step === "products" && selling ? await listDiscoverFeed(8, selling) : [],
   };
 }
 
@@ -78,8 +95,12 @@ export async function action({ request }: ActionFunctionArgs) {
   const intent = String(fd.get("intent") ?? "");
   const returnTo = safeDashboardReturnTo(fd.get("return_to") == null ? null : String(fd.get("return_to")));
 
-  const fail = (status: number, code: string) =>
-    wantsJson(request) ? jsonError(status, code) : redirect(onboardingHref(returnTo, code));
+  const fail = (status: number, code: string) => {
+    if (wantsJson(request)) return jsonError(status, code);
+    const productStep = intent === "import_products";
+    const selling = String(fd.get("selling") ?? "").trim().slice(0, 80);
+    return redirect(onboardingHref(returnTo, code, productStep ? "products" : undefined, selling));
+  };
 
   const session = await getSessionFromRequest(request);
   if (!session) return wantsJson(request) ? jsonError(401, "unauthenticated") : redirect("/login");
@@ -92,11 +113,17 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   if (!(await rateLimit(clientIpKey(request, "dash-onboarding"), 10, 60_000))) return fail(429, "rate_limited");
 
-  if (intent !== "contact" && intent !== "connect" && intent !== "skip") {
+  if (
+    intent !== "contact" &&
+    intent !== "connect" &&
+    intent !== "skip" &&
+    intent !== "import_products" &&
+    intent !== "finish_without_products"
+  ) {
     return fail(400, "invalid_intent");
   }
 
-  if (intent === "connect" || intent === "skip") {
+  if (intent !== "contact") {
     let contactDone: boolean;
     try {
       ({ contactDone } = await getOnboardingProgress(session.userId));
@@ -107,6 +134,26 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!contactDone) {
       return wantsJson(request) ? jsonError(400, "contact_required") : redirect(onboardingHref(returnTo));
     }
+    if (intent === "skip") return redirect(onboardingHref(returnTo, null, "products"));
+    if (intent === "import_products") {
+      const sourceProductIds = [
+        ...new Set(
+          fd
+            .getAll("source_product_id")
+            .map(String)
+            .filter((id) => id.length > 0 && id.length <= 100),
+        ),
+      ].slice(0, 8);
+      if (!sourceProductIds.length) return fail(422, "select_product");
+      try {
+        for (const sourceProductId of sourceProductIds) {
+          await pickProduct(session.shopId, sourceProductId);
+        }
+      } catch (err) {
+        console.error("[onboarding] product import failed", err);
+        return fail(500, "product_import_failed");
+      }
+    }
     try {
       await completeOnboarding(session.userId);
     } catch (err) {
@@ -114,6 +161,9 @@ export async function action({ request }: ActionFunctionArgs) {
       return fail(500, "save_failed");
     }
     if (intent === "connect") return redirect(dashboardLoginHref());
+    if (intent === "import_products" && session.emailVerified) {
+      return redirect(returnTo ?? "/dashboard/products/inventory");
+    }
     return redirect(returnTo ?? nextAfterOnboarding(session.emailVerified));
   }
 
@@ -145,7 +195,7 @@ function ContactStep({ error, returnTo }: { error: string | null; returnTo: stri
   return (
     <>
       <h1 className="cd-auth-title">Almost there</h1>
-      <p className="cd-auth-sub">Two quick things, then you&apos;re in.</p>
+      <p className="cd-auth-sub">A few quick details, then set up your catalog.</p>
       <AuthError code={error} />
       <AuthForm action="/dashboard/onboarding">
         <input type="hidden" name="intent" value="contact" />
@@ -236,7 +286,94 @@ function ImportStep({ error, returnTo }: { error: string | null; returnTo: strin
         <input type="hidden" name="intent" value="skip" />
         {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
         <button className="cd-auth-linkbtn" type="submit">
-          Skip for now
+          I don’t have a Shopify store
+        </button>
+      </AuthForm>
+    </>
+  );
+}
+
+function ProductsStep({
+  error,
+  returnTo,
+  selling,
+  products,
+}: {
+  error: string | null;
+  returnTo: string | null;
+  selling: string;
+  products: DiscoverFeedItem[];
+}) {
+  return (
+    <>
+      <h1 className="cd-auth-title">Find your first products</h1>
+      <p className="cd-auth-sub">Tell us what you sell and we’ll find matching dropshipping products.</p>
+      <AuthError code={error} />
+      <form method="get" action="/dashboard/onboarding">
+        <input type="hidden" name="step" value="products" />
+        {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
+        <label className="cd-auth-label" htmlFor="selling">
+          What are you selling?
+        </label>
+        <input
+          className="cd-auth-input"
+          id="selling"
+          name="selling"
+          type="text"
+          defaultValue={selling}
+          maxLength={80}
+          placeholder="e.g. fitness gear"
+          required
+          autoFocus
+        />
+        <button className="cd-auth-submit" type="submit">
+          Find products
+        </button>
+      </form>
+      {selling && products.length > 0 && (
+        <AuthForm action="/dashboard/onboarding" style={{ marginTop: 20 }}>
+          <input type="hidden" name="intent" value="import_products" />
+          <input type="hidden" name="selling" value={selling} />
+          {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
+          <fieldset style={{ border: 0, margin: "0 0 16px", padding: 0 }}>
+            <legend className="cd-auth-label">Choose products</legend>
+            {products.map((product) => (
+              <label
+                key={product.sourceProductId}
+                style={{ display: "flex", gap: 10, alignItems: "center", margin: "10px 0" }}
+              >
+                <input type="checkbox" name="source_product_id" value={product.sourceProductId} />
+                {product.imageUrl && (
+                  <img
+                    src={product.imageUrl}
+                    alt=""
+                    width={48}
+                    height={48}
+                    style={{ borderRadius: 8, objectFit: "cover" }}
+                  />
+                )}
+                <span>
+                  <strong>{product.title}</strong>
+                  <small style={{ display: "block", color: "var(--text-2)" }}>
+                    {product.supplierName} · ${(product.suggestedRetailCents / 100).toFixed(2)} retail
+                  </small>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          <AuthSubmit label="Add to inventory" pendingLabel="Adding products..." />
+        </AuthForm>
+      )}
+      {selling && products.length === 0 && (
+        <p className="cd-auth-sub" style={{ marginTop: 16 }}>
+          No matching products found. Try a broader description.
+        </p>
+      )}
+      <AuthForm action="/dashboard/onboarding" style={{ marginTop: 12 }}>
+        <input type="hidden" name="intent" value="finish_without_products" />
+        {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
+        <button className="cd-auth-linkbtn" type="submit">
+          Skip product suggestions
         </button>
       </AuthForm>
     </>
@@ -244,10 +381,12 @@ function ImportStep({ error, returnTo }: { error: string | null; returnTo: strin
 }
 
 export default function Onboarding() {
-  const { step, error, returnTo } = useLoaderData<typeof loader>();
+  const { step, error, returnTo, selling, products } = useLoaderData<typeof loader>();
   return (
     <AuthShell>
-      {step === "import" ? (
+      {step === "products" ? (
+        <ProductsStep error={error} returnTo={returnTo} selling={selling} products={products} />
+      ) : step === "import" ? (
         <ImportStep error={error} returnTo={returnTo} />
       ) : (
         <ContactStep error={error} returnTo={returnTo} />

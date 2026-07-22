@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { pickProduct } from "./discover.server";
+import { listDiscoverFeed, pickProduct } from "./discover.server";
 
 const mocks = vi.hoisted(() => ({
   sourceMaybeSingle: vi.fn(),
@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   readPointers: vi.fn(),
   runCommand: vi.fn(),
   getStoreSettings: vi.fn(),
+  feedLimit: vi.fn(),
 }));
 
 vi.mock("~/lib/supabase.server", () => ({
@@ -20,6 +21,9 @@ vi.mock("~/lib/supabase.server", () => ({
       }
       if (table === "product_media") return { insert: mocks.mediaInsert };
       if (table === "sourced_product_link") return { insert: mocks.linkInsert };
+      if (table === "source_product_score") {
+        return { select: () => ({ order: () => ({ limit: mocks.feedLimit }) }) };
+      }
       throw new Error(`Unexpected table ${table}`);
     },
   }),
@@ -67,6 +71,35 @@ beforeEach(() => {
   mocks.readPointers.mockResolvedValue({ draftVersionId: null, publishedVersionId: null });
   mocks.runCommand.mockResolvedValue({ status: "installed", versionId: "version-1", undo: null });
   mocks.getStoreSettings.mockResolvedValue({ composerEnabled: false });
+  mocks.feedLimit.mockResolvedValue({ data: [], error: null });
+});
+
+describe("listDiscoverFeed", () => {
+  it("returns products matching what the merchant sells", async () => {
+    const product = (id: string, title: string, category: string) => ({
+      score: 80,
+      source_product: {
+        id,
+        title,
+        category,
+        image_urls: [],
+        unit_cost_cents: 1000,
+        lead_time_days: 7,
+        supplier: { name: "Supplier", reliability_score: null },
+      },
+    });
+    mocks.feedLimit.mockResolvedValue({
+      data: [
+        product("fitness-1", "Resistance Bands", "Fitness"),
+        product("kitchen-1", "Mini Blender", "Kitchen"),
+      ],
+      error: null,
+    });
+
+    await expect(listDiscoverFeed(8, "fitness gear")).resolves.toEqual([
+      expect.objectContaining({ sourceProductId: "fitness-1", title: "Resistance Bands" }),
+    ]);
+  });
 });
 
 describe("pickProduct Store command handoff", () => {
