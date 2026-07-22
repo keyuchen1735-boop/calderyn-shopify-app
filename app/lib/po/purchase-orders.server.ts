@@ -10,6 +10,7 @@ import { CalderynError } from "~/lib/calderyn.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { ensurePrimaryLocation } from "~/lib/inventory/engine.server";
 import { projectLevelFact } from "~/lib/inventory/project-level-fact.server";
+import type { PoSortKey } from "./po-sort";
 import { hasPoSnapshot } from "~/lib/catalog/po-list.server";
 import { isUuid } from "~/lib/ids";
 import { defaultEta, formatPoNumber } from "./format";
@@ -382,7 +383,13 @@ interface PoListRpcRow {
  *  totals never depend on PostgREST's 1000-row response clamp. */
 export async function listPurchaseOrders(
   shopId: string,
-  opts: { limit?: number; offset?: number; status?: PoStatus } = {},
+  opts: {
+    limit?: number;
+    offset?: number;
+    status?: PoStatus;
+    sort?: PoSortKey;
+    dir?: "asc" | "desc";
+  } = {},
 ): Promise<{ pos: PoListItemDto[]; total: number }> {
   const limit = Math.min(opts.limit ?? 50, 100);
   const offset = Math.max(0, opts.offset ?? 0);
@@ -391,6 +398,10 @@ export async function listPurchaseOrders(
     p_limit: limit,
     p_offset: offset,
     p_status: opts.status ?? null,
+    // A sort key without a direction would match none of the RPC's CASE arms
+    // and silently fall back to newest-first, so pair them or send neither.
+    p_sort: opts.sort ?? null,
+    p_dir: opts.sort ? (opts.dir === "asc" ? "asc" : "desc") : null,
   });
   if (error) throw error;
   const rows = (data ?? []) as unknown as PoListRpcRow[];

@@ -5,6 +5,7 @@
 // plumbing.
 import { apiGet, apiSend } from "./client";
 import { cachedScreenData, SCREEN_CACHE_KEYS } from "./screen-cache";
+import type { PoSortKey } from "~/lib/po/po-sort";
 import type {
   CreatePoInput,
   PoDetailDto,
@@ -53,11 +54,19 @@ export function cachedDraftAuditIds(): string[] {
 export async function fetchPoScreen(
   auditIds: string[] = [],
   status?: PoStatusVM,
+  sort?: PoSortKey,
+  dir?: "asc" | "desc",
 ): Promise<PoScreenData> {
   const ids = auditIds.slice(0, 50);
   const params = new URLSearchParams();
   if (ids.length) params.set("auditIds", ids.join(","));
   if (status) params.set("status", status);
+  // Omitting sort leaves the list on the RPC's newest-first order, so dir alone
+  // is never sent — it would have nothing to apply to.
+  if (sort) {
+    params.set("sort", sort);
+    params.set("dir", dir === "asc" ? "asc" : "desc");
+  }
   // toString(), not .size — URLSearchParams.size is missing on older Safari,
   // where an undefined check would silently drop every query param.
   const search = params.toString();
@@ -81,9 +90,17 @@ export async function fetchPoScreen(
 export async function fetchPoPage(
   offset: number,
   status?: PoStatusVM,
+  sort?: PoSortKey,
+  dir?: "asc" | "desc",
 ): Promise<{ pos: PoListItemVM[]; total: number }> {
   const params = new URLSearchParams({ offset: String(offset) });
   if (status) params.set("status", status);
+  // Omitting sort leaves the list on the RPC's newest-first order, so dir alone
+  // is never sent — it would have nothing to apply to.
+  if (sort) {
+    params.set("sort", sort);
+    params.set("dir", dir === "asc" ? "asc" : "desc");
+  }
   const d = await apiGet<{ pos: PoListItemVM[]; total: number }>(
     `/dashboard/api/po?${params.toString()}`,
   );

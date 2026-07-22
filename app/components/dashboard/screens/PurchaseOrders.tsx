@@ -24,6 +24,12 @@ import {
   type SupplierVM,
 } from "~/lib/dashboard/po-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
+import { DEFAULT_PO_SORT, parsePoSort } from "~/lib/po/po-sort";
+import {
+  OrderSortHeader,
+  nextSortState,
+  useSortedRowsEntrance,
+} from "./OrderListFamily";
 import PoModal from "./PoModal";
 import PoSuppliersModal from "./PoSuppliersModal";
 import type { DashboardCtx } from "../context";
@@ -246,6 +252,11 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
   // loadedFilter tracks which filter the rows in `pos` belong to, so the UI
   // never renders one filter's rows under another filter's selected segment.
   const [statusFilter, setStatusFilter] = useState<PoStatusVM | "all">("all");
+  // Ordering runs in the po_list RPC, not here: the list is paged, so sorting
+  // the loaded rows would only order the rows already paged in.
+  const [poSort, setPoSort] = useState<{ sort: string; dir: "asc" | "desc" }>(DEFAULT_PO_SORT);
+  // undefined means the RPC's newest-first default, which no column represents.
+  const sortParam = parsePoSort(poSort.sort);
   const [loadedFilter, setLoadedFilter] = useState<PoStatusVM | "all">("all");
   const loadedFilterRef = useRef(loadedFilter);
   const statusFilterRef = useRef(statusFilter);
@@ -283,11 +294,13 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
       }
       try {
         const status = statusFilter === "all" ? undefined : statusFilter;
-        const main = await fetchPoScreen(auditIds, status);
+        const main = await fetchPoScreen(auditIds, status, sortParam, poSort.dir);
         if (!alive) return;
         // Only the unfiltered offset-0 payload is the cache contract's shape —
         // a filtered list must never seed the next visit.
-        if (!status) cacheScreenData(SCREEN_CACHE_KEYS.po, main);
+        // Only the unfiltered, default-ordered offset-0 payload matches the
+        // cache contract's shape — a sorted list must never seed the next visit.
+        if (!status && !sortParam) cacheScreenData(SCREEN_CACHE_KEYS.po, main);
         loadedFilterRef.current = statusFilter;
         setLoadedFilter(statusFilter);
         setPos(main.pos);
@@ -321,7 +334,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
     return () => {
       alive = false;
     };
-  }, [reloadKey, statusFilter]);
+  }, [reloadKey, statusFilter, sortParam, poSort.dir]);
 
   /** Full refetch — only for mutations that ADD rows (create, convert). New
    *  rows land as drafts, so jump back to the unfiltered view first or the
@@ -384,7 +397,14 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
     if (!pos) return;
     setLoadingMore(true);
     try {
-      const page = await fetchPoPage(pos.length, statusFilter === "all" ? undefined : statusFilter);
+      const page = await fetchPoPage(
+        pos.length,
+        statusFilter === "all" ? undefined : statusFilter,
+        // The offset is only meaningful against the ordering the loaded rows
+        // came back in.
+        sortParam,
+        poSort.dir,
+      );
       // The filter changed while this page was in flight — its rows belong to
       // the previous filter's universe, so appending them would corrupt the
       // narrowed list (and its total).
@@ -584,6 +604,21 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
   const filterPending = pos != null && loadedFilter !== statusFilter;
   const detail = drawer.detail;
 
+  // Same header click policy as the Inventory and Orders tables: a new column
+  // sorts its natural way (text A-Z, counts and dates highest/latest first), the
+  // active column flips, and a third click returns to the RPC's newest-first
+  // default, which has no column of its own.
+  const poHeaderSort = {
+    sort: poSort.sort,
+    dir: poSort.dir,
+    onSort: (col: string) => setPoSort((cur) => nextSortState(cur, col, DEFAULT_PO_SORT)),
+  };
+
+  // Rows rise on load and on every re-sort; a paged-in "load more" batch rises
+  // on its own without replaying the rows already on screen.
+  const poListRef = useRef<HTMLDivElement>(null);
+  useSortedRowsEntrance(poListRef, shown.map((row) => row.id).join("|"), [pos, poSort]);
+
   const canEdit = detail?.status === "draft";
   const canOrder = detail?.status === "draft";
   const canReceive = detail?.status === "ordered" || detail?.status === "partial";
@@ -659,13 +694,14 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
         ) : (
           <Pan min={760}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
-              <span>PO</span>
-              <span>Supplier</span>
-              <span>Deliver to</span>
-              <span>Expected</span>
-              <span>Lines</span>
-              <span>Status</span>
+              <OrderSortHeader label="PO" col="po" {...poHeaderSort} />
+              <OrderSortHeader label="Supplier" col="supplier" {...poHeaderSort} />
+              <OrderSortHeader label="Deliver to" col="destination" {...poHeaderSort} />
+              <OrderSortHeader label="Expected" col="expected" {...poHeaderSort} />
+              <OrderSortHeader label="Lines" col="lines" {...poHeaderSort} />
+              <OrderSortHeader label="Status" col="status" {...poHeaderSort} />
             </div>
+            <div ref={poListRef}>
             {shown.map((row) => (
               <button
                 key={row.id}
@@ -710,6 +746,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                 </div>
               </button>
             ))}
+            </div>
           </Pan>
         )}
       </Card>

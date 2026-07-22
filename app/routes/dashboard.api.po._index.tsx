@@ -24,19 +24,22 @@ import {
   promoteAuditDraft,
   validatePoBody,
 } from "~/lib/po/purchase-orders.server";
+import { parsePoSort } from "~/lib/po/po-sort";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const url = new URL(request.url);
   const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset"))) || 0);
   const status = parsePoStatus(url.searchParams.get("status"));
+  const sort = parsePoSort(url.searchParams.get("sort"));
+  const dir = url.searchParams.get("dir") === "asc" ? "asc" : "desc";
   const auditIds = (url.searchParams.get("auditIds") ?? "")
     .split(",")
     .filter((id) => isUuid(id))
     .slice(0, 50);
   return dashboardJson(async () => {
     const [page, promotedAuditIds] = await Promise.all([
-      listPurchaseOrders(session.shopId, { offset, status: status ?? undefined }),
+      listPurchaseOrders(session.shopId, { offset, status: status ?? undefined, sort, dir }),
       offset === 0 ? listPromotedAuditIds(session.shopId, auditIds) : Promise.resolve([]),
     ]);
     return { pos: page.pos, total: page.total, promotedAuditIds };

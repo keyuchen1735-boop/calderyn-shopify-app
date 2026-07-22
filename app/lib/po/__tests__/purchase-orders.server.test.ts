@@ -527,6 +527,10 @@ describe("listPurchaseOrders", () => {
       p_limit: 50,
       p_offset: 50,
       p_status: null,
+      // No column sort requested: both ordering params stay null so the RPC
+      // keeps its newest-first default.
+      p_sort: null,
+      p_dir: null,
     });
     expect(total).toBe(73);
     expect(pos[0]).toMatchObject({
@@ -585,12 +589,46 @@ describe("listPurchaseOrders", () => {
       p_limit: 50,
       p_offset: 100,
       p_status: "draft",
+      p_sort: null,
+      p_dir: null,
     });
     expect(total).toBe(7);
     // The honest-total fallback must count within the same status, or a
     // filtered view paged past its end reports the unfiltered total.
     const countQuery = state.queries.find((q) => q.table === "purchase_order");
     expect(countQuery?.filters).toContainEqual(["status", "draft"]);
+  });
+
+  it("passes a requested column sort and direction through to po_list", async () => {
+    state.rpc.mockResolvedValueOnce({ data: [], error: null });
+    enqueue("purchase_order", "select", { data: null, error: null, count: 0 });
+    await listPurchaseOrders(SHOP, { offset: 100, sort: "supplier", dir: "asc" });
+    expect(state.rpc).toHaveBeenCalledWith(
+      "po_list",
+      expect.objectContaining({ p_sort: "supplier", p_dir: "asc" }),
+    );
+  });
+
+  it("defaults the direction to desc when a sort arrives without one", async () => {
+    state.rpc.mockResolvedValueOnce({ data: [], error: null });
+    enqueue("purchase_order", "select", { data: null, error: null, count: 0 });
+    await listPurchaseOrders(SHOP, { offset: 100, sort: "lines" });
+    expect(state.rpc).toHaveBeenCalledWith(
+      "po_list",
+      expect.objectContaining({ p_sort: "lines", p_dir: "desc" }),
+    );
+  });
+
+  it("never sends a direction without a column — it would have nothing to apply to", async () => {
+    // p_dir alone matches none of the RPC's CASE arms, so it would silently do
+    // nothing; sending null for both keeps the intent explicit.
+    state.rpc.mockResolvedValueOnce({ data: [], error: null });
+    enqueue("purchase_order", "select", { data: null, error: null, count: 0 });
+    await listPurchaseOrders(SHOP, { offset: 100, dir: "asc" });
+    expect(state.rpc).toHaveBeenCalledWith(
+      "po_list",
+      expect.objectContaining({ p_sort: null, p_dir: null }),
+    );
   });
 });
 
