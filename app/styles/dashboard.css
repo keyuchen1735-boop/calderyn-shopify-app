@@ -84,6 +84,17 @@
   .cd-caption { font-size: calc(12px * var(--type-scale)); color: var(--text-3); line-height: 1.45; letter-spacing: -0.002em; }
   .cd-link { font-size: calc(13px * var(--type-scale)); color: var(--accent); font-weight: 500; background: none; border: none; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 1px; letter-spacing: -0.006em; }
   .cd-link:hover { opacity: 0.7; }
+  /* The greeting one-liner when it points at real work: reads as the same quiet
+     sentence, reveals itself as a target on hover/focus. */
+  .cd-sub-cta {
+    font: inherit; color: inherit; letter-spacing: inherit; background: none; border: none; padding: 0;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 2px; text-align: left;
+    transition: color 0.18s ease;
+  }
+  .cd-sub-cta svg { opacity: 0.55; transition: transform 0.22s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease; }
+  .cd-sub-cta:hover, .cd-sub-cta:focus-visible { color: var(--text-1); }
+  .cd-sub-cta:hover svg, .cd-sub-cta:focus-visible svg { opacity: 1; transform: translateX(2px); }
+  @media (prefers-reduced-motion: reduce) { .cd-sub-cta svg { transition: opacity 0.18s ease; } .cd-sub-cta:hover svg { transform: none; } }
   .cd-mono-num { font-size: calc(12px * var(--type-scale)); color: var(--text-2); font-weight: 600; }
 
   /* ============ layout ============ */

@@ -22,7 +22,7 @@ import { actionTier } from "~/lib/calibration/confidence";
 import { recoveredWithin } from "~/lib/recovered";
 import { sparklinePath } from "~/lib/sparkline";
 import { useLiveAnalytics } from "../use-live-analytics";
-import type { DashboardCtx } from "../context";
+import type { DashboardCtx, Screen } from "../context";
 import type { MilestoneKey } from "~/lib/dashboard/journey-model";
 import type { ProductSummaryVM } from "~/lib/dashboard/client";
 import type { QueueProposalVM } from "../view-models";
@@ -433,6 +433,12 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           ? `${totalAsks} ${totalAsks === 1 ? "decision is" : "decisions are"} waiting on you.`
           : "All quiet. I'm watching your store.";
 
+  // The one-liner is a claim about work that lives somewhere — send the
+  // merchant there. Only the two variants that name real, countable work are
+  // actionable; "all quiet" and the fresh-store welcome stay plain text.
+  const sublineTo: Screen | null =
+    freshStore || !app.booted ? null : autoToday.count > 0 ? "audit" : totalAsks > 0 ? "autopilot" : null;
+
   const conversion =
     live && live.sessions_today > 0
       ? ((live.funnel.purchased_sessions / live.sessions_today) * 100).toFixed(1) + "%"
@@ -523,7 +529,16 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         <div className="cd-home-head-t">
           <h1 className="cd-h1">{freshStore ? "Welcome." : `${greet}.`}</h1>
           {subline ? (
-            <p className="cd-sub">{subline}</p>
+            <p className="cd-sub">
+              {sublineTo ? (
+                <button type="button" className="cd-sub-cta" onClick={() => app.navigate(sublineTo)}>
+                  {subline}
+                  <CDIcon name="chevronRight" size={13} strokeWidth={2} />
+                </button>
+              ) : (
+                subline
+              )}
+            </p>
           ) : (
             // Reserve the subline's line while the agent's one-liner loads so
             // the whole page doesn't shift down when it lands.
