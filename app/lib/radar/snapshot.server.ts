@@ -141,20 +141,40 @@ function delta(prev: string[], next: string[]): { added: string[]; removed: stri
   };
 }
 
+/** Prices whose label is UNIQUE on a side, keyed by label. A heading that
+ *  labels two different prices (e.g. a grid where several cards share the
+ *  heading "Featured") is ambiguous - it can't name a single product - so it
+ *  is dropped rather than collapsed to whichever entry happened to come last. */
+function uniqueLabeledPrices(
+  entries: ReadonlyArray<{ label: string; price: string }>,
+): Map<string, string> {
+  const counts = new Map<string, number>();
+  for (const entry of entries) counts.set(entry.label, (counts.get(entry.label) ?? 0) + 1);
+  const unique = new Map<string, string>();
+  for (const entry of entries) {
+    if (counts.get(entry.label) === 1) unique.set(entry.label, entry.price);
+  }
+  return unique;
+}
+
 /** Labeled prices present on both sides, whose label carried a different
  *  price value each side. This is the only truthful basis for a
- *  specific-product price claim - see the contract on CompetitorDiff. */
+ *  specific-product price claim - see the contract on CompetitorDiff. A label
+ *  must be unambiguous (appear once) on BOTH sides to back a claim: a duplicated
+ *  heading would otherwise fabricate a was->now move for a product whose price
+ *  never actually changed. */
 function labeledPriceChanges(
   prev: CompetitorExtract,
   next: CompetitorExtract,
 ): Array<{ label: string; from: string; to: string }> | undefined {
   if (!prev.labeledPrices || !next.labeledPrices) return undefined;
-  const prevByLabel = new Map(prev.labeledPrices.map((p) => [p.label, p.price]));
+  const prevByLabel = uniqueLabeledPrices(prev.labeledPrices);
+  const nextByLabel = uniqueLabeledPrices(next.labeledPrices);
   const changes: Array<{ label: string; from: string; to: string }> = [];
-  for (const entry of next.labeledPrices) {
-    const from = prevByLabel.get(entry.label);
-    if (from !== undefined && from !== entry.price) {
-      changes.push({ label: entry.label, from, to: entry.price });
+  for (const [label, price] of nextByLabel) {
+    const from = prevByLabel.get(label);
+    if (from !== undefined && from !== price) {
+      changes.push({ label, from, to: price });
     }
   }
   return changes.length > 0 ? changes : undefined;

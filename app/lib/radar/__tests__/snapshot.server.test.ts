@@ -205,6 +205,23 @@ describe("diffExtracts", () => {
     const diff = diffExtracts(base, next);
     expect(diff?.priceChanges).toBeUndefined();
   });
+  it("does not fabricate a price change from a duplicated (ambiguous) heading label", () => {
+    // Two products share the "Featured" heading at $20 and $10, unchanged
+    // between snapshots; only an unrelated heading moved. A label that names
+    // two prices can't identify a single product, so it must back no claim.
+    const prev = {
+      ...base,
+      headings: ["Featured", "Deals"],
+      labeledPrices: [{ label: "Featured", price: "$20.00" }, { label: "Featured", price: "$10.00" }],
+    };
+    const next = {
+      ...base,
+      headings: ["Featured", "Bargains"],
+      labeledPrices: [{ label: "Featured", price: "$20.00" }, { label: "Featured", price: "$10.00" }],
+    };
+    const diff = diffExtracts(prev, next);
+    expect(diff?.priceChanges).toBeUndefined();
+  });
 });
 
 describe("snapshotWatchingCompetitors", () => {
