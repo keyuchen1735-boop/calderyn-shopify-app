@@ -20,6 +20,7 @@ import { resolveShopForUser } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
 import { safeDashboardReturnTo, publicBaseUrl } from "~/lib/dashboard/http.server";
 import { GOAUTH_COOKIE, expireCookieHeader } from "~/lib/dashboard/cookies.server";
+import { rememberOnSignIn } from "~/lib/auth/remembered-accounts.server";
 
 const CLEAR_GOAUTH = expireCookieHeader(GOAUTH_COOKIE);
 
@@ -119,6 +120,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const { raw } = await createSessionForUser(byGoogleSub.id, byGoogleSub.shopId);
     const headers = new Headers();
     headers.append("Set-Cookie", sessionCookieHeader(raw));
+    headers.append("Set-Cookie", rememberOnSignIn(request, raw));
     headers.append("Set-Cookie", CLEAR_GOAUTH);
     return redirect(afterAuth(byGoogleSub.onboardedAt), { headers });
   }
@@ -136,6 +138,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const { raw } = await createSessionForUser(byEmail.id, shopId);
     const headers = new Headers();
     headers.append("Set-Cookie", sessionCookieHeader(raw));
+    headers.append("Set-Cookie", rememberOnSignIn(request, raw));
     headers.append("Set-Cookie", CLEAR_GOAUTH);
     return redirect(afterAuth(byEmail.onboardedAt), { headers });
   }

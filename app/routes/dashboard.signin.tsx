@@ -27,6 +27,7 @@ import {
   sessionCookieHeader,
 } from "~/lib/dashboard/session.server";
 import { clearShopHintCookieHeader } from "~/lib/dashboard/cookies.server";
+import { rememberOnSignIn } from "~/lib/auth/remembered-accounts.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   // Already signed in? Straight to the dashboard — re-submitting the form
@@ -79,6 +80,9 @@ export async function action({ request }: ActionFunctionArgs) {
   // A stale Shopify shop hint from a past OAuth login has no business outliving
   // a first-party sign-in — drop it so /dashboard/login pre-fill can't drift.
   headers.append("Set-Cookie", clearShopHintCookieHeader());
+  // Add this account to the device's remembered-accounts list so the /login
+  // chooser can offer one-click re-entry next time.
+  headers.append("Set-Cookie", rememberOnSignIn(request, raw));
   // Honour a validated destination (e.g. /dashboard/connect?t=…) so the
   // connector consent flow survives the sign-in round-trip.
   return redirect(returnTo ?? "/dashboard", { headers });

@@ -27,6 +27,12 @@ export const SHOPLESS_STATE_SHOP = "*";
 /** Google-signin CSRF nonce for /dashboard/auth/google → its callback. */
 export const GOAUTH_COOKIE = "__Host-calderyn_goauth";
 
+/** Remembered accounts for the /login multi-account chooser — raw session
+ *  tokens of past sign-ins on this device, `|`-separated. Owned by
+ *  lib/auth/remembered-accounts.server.ts; the name lives here so
+ *  session.server's teardown can expire it without a circular import. */
+export const ACCOUNTS_COOKIE_NAME = "__Host-calderyn_accounts";
+
 // Remembered shop for the Shopify entry (/dashboard/login): set only after a
 // successful OAuth callback (never on an unauthenticated GET — a crafted link
 // could otherwise plant it). Steers the bounce-back error page's retry link at

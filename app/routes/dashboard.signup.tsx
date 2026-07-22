@@ -7,6 +7,7 @@ import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson, publicBa
 import { isValidEmail, normalizeEmail, findUserByEmail, createUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
+import { rememberOnSignIn } from "~/lib/auth/remembered-accounts.server";
 import { sendVerificationEmail } from "~/lib/auth/verify.server";
 
 const MIN_PASSWORD = 10;
@@ -81,9 +82,12 @@ export async function action({ request }: ActionFunctionArgs) {
     // Onboarding (phone + how-heard, optional Shopify port) runs right after signup,
     // before the verify gate. return_to rides through it so an interrupted deep-link
     // (connector consent) resumes once onboarding completes.
+    const headers = new Headers();
+    headers.append("Set-Cookie", sessionCookieHeader(raw));
+    headers.append("Set-Cookie", rememberOnSignIn(request, raw));
     return redirect(
       returnTo ? `/dashboard/onboarding?return_to=${encodeURIComponent(returnTo)}` : "/dashboard/onboarding",
-      { headers: { "Set-Cookie": sessionCookieHeader(raw) } },
+      { headers },
     );
   } catch (err) {
     await deleteUser(userId).catch(() => {});

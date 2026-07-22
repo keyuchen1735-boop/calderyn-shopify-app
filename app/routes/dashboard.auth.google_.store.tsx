@@ -9,6 +9,7 @@ import { verifyGoogleSignup } from "~/lib/auth/google-signup-token.server";
 import { createGoogleUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
+import { rememberOnSignIn } from "~/lib/auth/remembered-accounts.server";
 import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson, safeDashboardReturnTo } from "~/lib/dashboard/http.server";
 import { AuthShell, AuthError, AuthForm, AuthSubmit } from "~/components/auth/AuthCard";
 
@@ -69,7 +70,10 @@ export async function action({ request }: ActionFunctionArgs) {
     const { shopId } = await provisionOwnedShop(store);
     await linkMembership(userId, shopId, "owner");
     const { raw } = await createSessionForUser(userId, shopId);
-    return redirect(onboardingDest, { headers: { "Set-Cookie": sessionCookieHeader(raw) } });
+    const headers = new Headers();
+    headers.append("Set-Cookie", sessionCookieHeader(raw));
+    headers.append("Set-Cookie", rememberOnSignIn(request, raw));
+    return redirect(onboardingDest, { headers });
   } catch (err) {
     if (userId == null) {
       // createGoogleUser itself failed. A duplicate means the token was replayed

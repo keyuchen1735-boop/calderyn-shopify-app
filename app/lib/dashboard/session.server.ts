@@ -13,6 +13,7 @@ import {
   clearShopHintCookieHeader,
   STATE_COOKIE_NAME,
   GOAUTH_COOKIE,
+  ACCOUNTS_COOKIE_NAME,
 } from "./cookies.server";
 import { SHOP_HINT_COOKIE_NAME as CONNECT_SHOP_HINT } from "../connect-deeplink.server";
 import { safeDashboardReturnTo } from "./http.server";
@@ -54,8 +55,11 @@ export function clearSessionCookieHeader(): string {
 /**
  * Every auth-adjacent cookie the browser must not keep once a session ends: the
  * session token, both remembered-shop hints (dashboard + connector surfaces),
- * and any in-flight OAuth state nonces. Shared by logout and account deletion so
- * the two teardowns can never drift — a cookie added here is expired by both.
+ * any in-flight OAuth state nonces, and the remembered-accounts chooser list.
+ * Shared by logout and account deletion so the two teardowns can never drift —
+ * a cookie added here is expired by both. (Logout alone swaps the remembered-
+ * accounts clear for a rewrite that keeps the OTHER accounts' one-click entry —
+ * see dashboard.api.logout — every other header applies verbatim.)
  */
 export function authClearCookieHeaders(): string[] {
   return [
@@ -64,6 +68,7 @@ export function authClearCookieHeaders(): string[] {
     expireCookieHeader(CONNECT_SHOP_HINT),
     expireCookieHeader(STATE_COOKIE_NAME),
     expireCookieHeader(GOAUTH_COOKIE),
+    expireCookieHeader(ACCOUNTS_COOKIE_NAME),
   ];
 }
 
