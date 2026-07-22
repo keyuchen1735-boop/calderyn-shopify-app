@@ -5690,27 +5690,31 @@ button.cd-alert-row:hover { background: color-mix(in oklch, var(--gray-bg) 68%, 
   .cd-auth-card { padding: 26px 20px 22px; border-radius: 14px; }
   .cd-auth-title { font-size: calc(21px * var(--type-scale)); }
 }
-/* Account chooser: one row per remembered account — the big control enters
-   (button = live one-click switch; link = signed-out email-prefill), the
-   small × forgets. Row is a flex pair (two siblings) because the remove
-   control cannot nest inside the switch form. */
+/* Account chooser: one full-width card per remembered account, matching the
+   auth buttons above it (button = live one-click switch; link = signed-out
+   email-prefill). The remove form overlays the card's right edge absolutely
+   (nested forms are invalid HTML), hidden until hover/focus — GSAP swaps it
+   in for the trailing hint; a hover-none rule keeps it visible on touch. */
 .cd-auth-accounts { display: flex; flex-direction: column; gap: 8px; margin: 0 0 4px; }
-.cd-auth-account { display: flex; align-items: stretch; gap: 6px; }
-.cd-auth-account-form { flex: 1; min-width: 0; display: flex; }
+.cd-auth-account { position: relative; }
+.cd-auth-account-form { display: flex; }
 .cd-auth-account-btn {
-  display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; box-sizing: border-box;
+  display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; box-sizing: border-box;
   font: inherit; text-align: left; color: var(--text-1); background: var(--card-solid);
-  border: 1px solid var(--hairline-strong); border-radius: 12px; padding: 10px 12px;
+  border: 1px solid var(--hairline-strong); border-radius: 12px; padding: 10px 46px 10px 12px;
   cursor: pointer; letter-spacing: -0.006em; text-decoration: none;
   transition: background 0.14s ease, border-color 0.14s ease, transform 0.12s ease;
 }
 .cd-auth-account-btn:hover { background: var(--gray-bg); border-color: var(--text-3); }
-.cd-auth-account-status {
-  flex-shrink: 0; margin-left: auto; font-size: calc(11px * var(--type-scale));
-  font-weight: 600; color: var(--text-3); letter-spacing: 0.02em;
-}
 .cd-auth-account-btn:active { transform: scale(0.985); }
-.cd-auth-account-btn > svg { flex-shrink: 0; color: var(--text-3); margin-left: auto; }
+.cd-auth-account-hint {
+  position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; color: var(--text-3); pointer-events: none;
+}
+.cd-auth-account-status {
+  font-size: calc(11px * var(--type-scale)); font-weight: 600; color: var(--text-3);
+  letter-spacing: 0.02em; white-space: nowrap;
+}
 .cd-auth-account-avatar {
   width: 32px; height: 32px; flex-shrink: 0; display: grid; place-items: center;
   border-radius: 50%; background: var(--accent-bg); color: var(--accent);
@@ -5725,13 +5729,27 @@ button.cd-alert-row:hover { background: color-mix(in oklch, var(--gray-bg) 68%, 
   font-size: calc(12px * var(--type-scale)); color: var(--text-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.cd-auth-account-removeform {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex;
+}
 .cd-auth-account-remove {
-  display: grid; place-items: center; width: 34px; box-sizing: border-box; flex-shrink: 0;
+  display: grid; place-items: center; width: 30px; height: 30px; box-sizing: border-box;
   font: inherit; color: var(--text-3); background: none;
-  border: 1px solid transparent; border-radius: 12px; cursor: pointer;
+  border: 1px solid transparent; border-radius: 50%; cursor: pointer;
+  opacity: 0; visibility: hidden;
   transition: color 0.14s ease, background 0.14s ease;
 }
 .cd-auth-account-remove:hover { color: var(--red); background: var(--red-bg); }
+/* No-JS / keyboard fallback: reveal without GSAP. (GSAP's inline styles take
+   over after the first mouse event; these rules only matter before that.) */
+.cd-auth-account:hover .cd-auth-account-remove,
+.cd-auth-account-remove:focus-visible { opacity: 1; visibility: visible; }
+/* Touch has no hover: keep the remove control persistently reachable and
+   drop the trailing hint it would otherwise overlap. */
+@media (hover: none) {
+  .cd-auth-account-remove { opacity: 1 !important; visibility: visible !important; transform: none !important; }
+  .cd-auth-account-hint { display: none; }
+}
 .cd-auth-account-btn:focus-visible,
 .cd-auth-account-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
