@@ -26,10 +26,18 @@ export interface MerchantNotifyResult {
 
 /** Display-only formatting; money stays integer cents everywhere else. */
 function money(cents: number, currency: string): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format(cents / 100);
+  const amount = cents / 100;
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency.toUpperCase(),
+    }).format(amount);
+  } catch {
+    // An empty/non-ISO currency makes Intl throw a RangeError (and a null one a
+    // TypeError). Degrade to a plain amount so a bad currency code costs the
+    // merchant a currency symbol, not the entire "you made a sale" notice.
+    return amount.toFixed(2);
+  }
 }
 
 const DASHBOARD_ORIGIN = "https://app.calderyncompany.com";
