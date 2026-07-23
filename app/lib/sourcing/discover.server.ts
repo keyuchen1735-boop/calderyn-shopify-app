@@ -56,7 +56,14 @@ export async function listDiscoverFeed(limit = 40, search = ""): Promise<Discove
     .limit(search ? 200 : limit);
   if (error) throw error;
 
-  const terms = search.toLowerCase().split(/\s+/).filter((term) => term.length > 2);
+  // Longer tokens make the best keyword matches, but a query made up entirely
+  // of short tokens ("tv", "pc", "3d") must still filter — otherwise the guard
+  // below is skipped and the merchant gets the global top-scoring feed passed
+  // off as matches for what they typed. Fall back to the whole trimmed query as
+  // a single term in that case; an empty search still means "no filter".
+  const trimmed = search.trim().toLowerCase();
+  const longTerms = trimmed.split(/\s+/).filter((term) => term.length > 2);
+  const terms = longTerms.length ? longTerms : trimmed ? [trimmed] : [];
   return ((data ?? []) as unknown as FeedRow[]).flatMap((row) => {
     const p = row.source_product;
     if (!p) return [];

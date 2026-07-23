@@ -100,6 +100,34 @@ describe("listDiscoverFeed", () => {
       expect.objectContaining({ sourceProductId: "fitness-1", title: "Resistance Bands" }),
     ]);
   });
+
+  it("still filters when the whole query is short tokens (no unfiltered feed leak)", async () => {
+    const product = (id: string, title: string, category: string) => ({
+      score: 90,
+      source_product: {
+        id,
+        title,
+        category,
+        image_urls: [],
+        unit_cost_cents: 1000,
+        lead_time_days: 7,
+        supplier: { name: "Supplier", reliability_score: null },
+      },
+    });
+    mocks.feedLimit.mockResolvedValue({
+      data: [
+        product("home-1", "Ambient Lamp", "Home"),
+        product("tv-1", "Smart TV Mount", "Electronics"),
+      ],
+      error: null,
+    });
+
+    // "tv" is 2 chars, so it survives no long-token filter; before the fix this
+    // returned the whole (highest-scoring first) feed as if it all matched.
+    await expect(listDiscoverFeed(8, "tv")).resolves.toEqual([
+      expect.objectContaining({ sourceProductId: "tv-1", title: "Smart TV Mount" }),
+    ]);
+  });
 });
 
 describe("pickProduct Store command handoff", () => {
