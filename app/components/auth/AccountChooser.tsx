@@ -25,11 +25,18 @@ export type ChooserAccount = {
   live: boolean;
 };
 
-function deadEntryHref(account: ChooserAccount): string {
+function deadEntryHref(account: ChooserAccount, returnTo: string | null): string {
+  // A threaded connector/deep-link destination must survive re-auth here too —
+  // the live one-click form forwards it, so the signed-out fallback must not
+  // drop it (both targets re-validate return_to server-side).
+  const params = new URLSearchParams();
   // Shop-only sessions (no first-party user) have no password to fall back
   // to — re-entry is the Shopify OAuth flow.
-  if (!account.email) return "/dashboard/login";
-  return `/login?email=${encodeURIComponent(account.email)}`;
+  if (account.email) params.set("email", account.email);
+  if (returnTo) params.set("return_to", returnTo);
+  const qs = params.toString();
+  const base = account.email ? "/login" : "/dashboard/login";
+  return qs ? `${base}?${qs}` : base;
 }
 
 function prefersReducedMotion(): boolean {
@@ -111,7 +118,7 @@ function AccountRow({
           </button>
         </form>
       ) : (
-        <a className="cd-auth-account-btn" href={deadEntryHref(account)}>
+        <a className="cd-auth-account-btn" href={deadEntryHref(account, returnTo)}>
           {body}
         </a>
       )}
