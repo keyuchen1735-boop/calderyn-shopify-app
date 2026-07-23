@@ -145,14 +145,21 @@ export async function action({ request }: ActionFunctionArgs) {
         ),
       ].slice(0, 8);
       if (!sourceProductIds.length) return fail(422, "select_product");
-      try {
-        for (const sourceProductId of sourceProductIds) {
+      // Import each pick independently. pickProduct is not idempotent — it mints a
+      // fresh product per call — so aborting the whole batch on one failure and
+      // sending the user back with the same items still checked would duplicate
+      // the picks that already committed once they retry. Complete onboarding as
+      // long as at least one product landed; only a total failure surfaces.
+      let imported = 0;
+      for (const sourceProductId of sourceProductIds) {
+        try {
           await pickProduct(session.shopId, sourceProductId);
+          imported += 1;
+        } catch (err) {
+          console.error(`[onboarding] product import failed for ${sourceProductId}`, err);
         }
-      } catch (err) {
-        console.error("[onboarding] product import failed", err);
-        return fail(500, "product_import_failed");
       }
+      if (imported === 0) return fail(500, "product_import_failed");
     }
     try {
       await completeOnboarding(session.userId);
