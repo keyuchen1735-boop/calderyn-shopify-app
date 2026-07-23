@@ -16,7 +16,14 @@ const APEX = "https://calderyncompany.com";
 
 describe("/login Shopify provider button", () => {
   it("renders a provider button routing to signup with the shopify marker on the apex", () => {
-    loaderDataRef.current = { error: null, notice: null, email: "", returnTo: null, authBase: APEX };
+    loaderDataRef.current = {
+      error: null,
+      notice: null,
+      email: "",
+      returnTo: null,
+      authBase: APEX,
+      accounts: [],
+    };
     const html = renderToStaticMarkup(createElement(LoginPage));
     expect(html).toContain("Continue with Shopify");
     // Absolute apex URL: signup (and the OAuth flow it leads into) lives on
@@ -36,6 +43,7 @@ describe("/login Shopify provider button", () => {
       email: "",
       returnTo: "/dashboard/connect?t=abc",
       authBase: APEX,
+      accounts: [],
     };
     const html = renderToStaticMarkup(createElement(LoginPage));
     expect(html).toContain(
