@@ -16,12 +16,18 @@ export async function action({ request }: ActionFunctionArgs) {
 
   // Idempotent: always clear the cookies, even when the session is already
   // expired/revoked/missing (getSessionFromRequest returns null then), so a stale
-  // token can never linger on the wire. Best-effort server-side revoke.
+  // token can never linger on the wire. Best-effort server-side revoke — but
+  // track whether it actually took: a live session whose revoke throws must NOT
+  // stay one-click-reachable in the chooser (see rememberOnSignOut).
+  let revoked = true;
   try {
     const session = await getSessionFromRequest(request);
     if (session) await revokeSession(session.sessionId);
+    // No session → nothing to keep alive; the row (if any) is already dead.
   } catch {
-    /* best effort — the cookies are cleared regardless */
+    // A live session survived the revoke: it is still LIVE server-side, so its
+    // token must be dropped from the accounts cookie, not kept as a shortcut.
+    revoked = false;
   }
 
   // Logout means the browser keeps no auth-adjacent state for THIS account: an
@@ -37,7 +43,7 @@ export async function action({ request }: ActionFunctionArgs) {
     if (cookie.startsWith(`${ACCOUNTS_COOKIE_NAME}=`)) continue;
     headers.append("Set-Cookie", cookie);
   }
-  headers.append("Set-Cookie", await rememberOnSignOut(request, activeRaw));
+  headers.append("Set-Cookie", await rememberOnSignOut(request, activeRaw, revoked));
 
   // Document form POSTs need a page to land on, not a JSON body; fetch callers
   // (Accept: */* or application/json) keep the JSON contract.

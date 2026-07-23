@@ -229,15 +229,33 @@ describe("rememberOnSignOut", () => {
       ],
       error: null,
     });
-    const header = await rememberOnSignOut(req(cookieOf([active, sameUserOlder, other])), active);
+    const header = await rememberOnSignOut(req(cookieOf([active, sameUserOlder, other])), active, true);
     expect(header).toContain(`${ACCOUNTS_COOKIE_NAME}=${active}|${other};`);
   });
 
   it("keeps a sole signed-out account in the cookie (still listed, password required)", async () => {
     const active = tok("a");
     setSupabaseResponse({ data: [row({ raw: active, user_id: "u1", email: "a@b.co", revoked: true })], error: null });
-    const header = await rememberOnSignOut(req(cookieOf([active])), active);
+    const header = await rememberOnSignOut(req(cookieOf([active])), active, true);
     expect(header).toContain(`${ACCOUNTS_COOKIE_NAME}=${active};`);
     expect(header).not.toContain("Max-Age=0");
+  });
+
+  it("drops the signed-out token when the revoke failed — no one-click re-entry", async () => {
+    const active = tok("a");
+    const other = tok("c");
+    // revoked=false means the session row is still LIVE server-side. If the
+    // token were kept, the /login chooser would resolve it to a one-click
+    // entry and switch-account would re-mint a session with no password.
+    const header = await rememberOnSignOut(req(cookieOf([active, other])), active, false);
+    expect(header).toContain(`${ACCOUNTS_COOKIE_NAME}=${other};`);
+    expect(header).not.toContain(active);
+  });
+
+  it("clears the cookie when the sole account's revoke failed", async () => {
+    const active = tok("a");
+    const header = await rememberOnSignOut(req(cookieOf([active])), active, false);
+    expect(header).not.toContain(active);
+    expect(header).toContain("Max-Age=0");
   });
 });

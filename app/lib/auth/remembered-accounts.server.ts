@@ -73,14 +73,26 @@ function identityOf(row: SessionRow): string {
  *  prefill entry), but any OLDER token of the same identity is dropped — a
  *  stale still-live session from an earlier sign-in must not survive an
  *  explicit logout as a one-click entry. Falls back to keeping the list as-is
- *  if the identity lookup fails: logout must never 500 over a prune. */
+ *  if the identity lookup fails: logout must never 500 over a prune.
+ *
+ *  `revoked` reports whether the server-side revoke actually succeeded (or
+ *  there was no live session to revoke). When it is false — a live session
+ *  whose revoke threw — the signed-out token is DROPPED instead of kept: its
+ *  row is still LIVE, so keeping it listed would leave a one-click re-entry
+ *  into the just-signed-out account. Dropping it forces a password sign-in. */
 export async function rememberOnSignOut(
   request: Request,
   activeRaw: string | null,
+  revoked: boolean,
 ): Promise<string> {
   const tokens = readRememberedTokens(request);
   if (!activeRaw || !tokens.includes(activeRaw)) {
     return rememberedAccountsCookieHeader(tokens);
+  }
+  if (!revoked) {
+    // Revoke failed and the row is still live: drop the signed-out token so it
+    // cannot resolve to a one-click chooser entry. Re-entry needs the password.
+    return rememberedAccountsCookieHeader(tokens.filter((t) => t !== activeRaw));
   }
   try {
     const rows = await fetchRows(tokens);
