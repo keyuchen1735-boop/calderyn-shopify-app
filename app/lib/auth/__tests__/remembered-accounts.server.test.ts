@@ -128,6 +128,23 @@ describe("resolveRememberedAccounts", () => {
     expect(cookieHeader).toBeNull();
   });
 
+  it("renders only MAX_ACCOUNTS but keeps extra live identities in the cookie", async () => {
+    const toks = "abcdef".split("").map(tok); // 6 distinct live users
+    setSupabaseResponse({
+      data: toks.map((t, i) =>
+        row({ raw: t, user_id: `u${i}`, email: `u${i}@x.co`, display_name: `Store ${i}` }),
+      ),
+      error: null,
+    });
+    const { accounts, cookieHeader } = await resolveRememberedAccounts(req(cookieOf(toks)));
+    // Only five cards render...
+    expect(accounts).toHaveLength(5);
+    // ...but every identity is still resolvable, so nothing is pruned: the 6th
+    // account survives (hidden below the fold) instead of being forgotten by a
+    // cookie rewrite truncated to the display cap.
+    expect(cookieHeader).toBeNull();
+  });
+
   it("dedupes per identity preferring a live token, prunes rowless tokens", async () => {
     const deadNewest = tok("a"); // same user's just-signed-out token
     const liveOlder = tok("b"); // same user, earlier sign-in, still live

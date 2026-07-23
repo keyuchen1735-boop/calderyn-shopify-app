@@ -194,11 +194,16 @@ export async function resolveRememberedAccounts(request: Request): Promise<Resol
   const accounts: RememberedAccount[] = [];
   const kept: string[] = [];
   for (const raw of tokens) {
-    if (accounts.length >= MAX_ACCOUNTS) break;
     if (!chosen.has(raw)) continue;
-    const row = rows.get(hashSessionToken(raw)) as SessionRow;
+    // Keep every resolvable identity in the cookie — the rewrite below only
+    // dedupes and prunes vanished rows. MAX_ACCOUNTS caps how many cards RENDER,
+    // not how many survive: truncating the stored set here would permanently
+    // forget a still-live 6th+ account on a shared device instead of hiding it.
     kept.push(raw);
-    accounts.push(accountFromRow(raw, row));
+    if (accounts.length < MAX_ACCOUNTS) {
+      const row = rows.get(hashSessionToken(raw)) as SessionRow;
+      accounts.push(accountFromRow(raw, row));
+    }
   }
 
   const cookieHeader =
