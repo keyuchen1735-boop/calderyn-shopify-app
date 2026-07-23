@@ -489,6 +489,19 @@ export async function billingStatus(shopId: string): Promise<BillingDTO> {
 export async function expressLoginLink(shopId: string): Promise<{ url: string } | null> {
   const acct = await getConnectedAccount(shopId);
   if (!acct || !acct.details_submitted) return null;
-  const login = await getStripe().accounts.createLoginLink(acct.stripe_account_id);
-  return { url: login.url };
+  try {
+    const login = await getStripe().accounts.createLoginLink(acct.stripe_account_id);
+    return { url: login.url };
+  } catch (err) {
+    // Same orphaned-row cause startOnboarding/syncAccountStatus surface: a row we
+    // think is onboarded whose account Stripe no longer recognizes. Convert to a
+    // merchant-readable PayoutAccountError so the caller shows what actually went
+    // wrong instead of an opaque internal_error, matching the sibling intents.
+    if (isUnknownAccountError(err)) {
+      throw new PayoutAccountError(
+        "Stripe no longer recognizes this payout account. Choose Resume onboarding to set payouts up again.",
+      );
+    }
+    throw asPayoutError(err, "Stripe couldn't open your payout dashboard");
+  }
 }
