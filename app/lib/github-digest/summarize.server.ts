@@ -35,15 +35,17 @@ function isEmpty(a: Activity): boolean {
   return a.commits.length === 0 && a.mergedPRs.length === 0 && a.openedPRs.length === 0;
 }
 
-const SYSTEM_PROMPT = [
-  "You write a daily git-activity digest for a non-technical founder.",
-  "You are given the day's work grouped by person.",
-  'Respond with ONLY a JSON object (no markdown, no code fences) of the exact shape:',
-  '{"overview": string, "people": { "<key>": string }}',
-  '- "overview": 2-3 plain-English sentences about the day overall. No commit hashes, no branch names, no git jargon.',
-  '- "people": one entry per provided person key; the value is ONE plain-English sentence about what that person worked on.',
-  "Use only the person keys provided. Output JSON only.",
-].join(" ");
+function systemPrompt(brand: string): string {
+  return [
+    `You write a daily git-activity digest for the non-technical founder of ${brand}.`,
+    "You are given the day's work grouped by person.",
+    'Respond with ONLY a JSON object (no markdown, no code fences) of the exact shape:',
+    '{"overview": string, "people": { "<key>": string }}',
+    '- "overview": 2-3 plain-English sentences about the day overall. No commit hashes, no branch names, no git jargon.',
+    '- "people": one entry per provided person key; the value is ONE plain-English sentence about what that person worked on.',
+    "Use only the person keys provided. Output JSON only.",
+  ].join(" ");
+}
 
 function activityForPrompt(groups: PersonGroup[], dateLabel: string): string {
   const blocks = groups.map((g) => {
@@ -81,9 +83,9 @@ function parseAi(raw: string): AiResult | null {
   return { overview: obj.overview, people };
 }
 
-async function aiStructured(groups: PersonGroup[], dateLabel: string): Promise<AiResult | null> {
+async function aiStructured(groups: PersonGroup[], dateLabel: string, brand: string): Promise<AiResult | null> {
   const client = getAnthropic();
-  // No cache_control: SYSTEM_PROMPT is ~150 tokens, below this model's
+  // No cache_control: the system prompt is ~150 tokens, below this model's
   // 2048-token minimum cacheable prefix, and this runs once per day (cron),
   // so the prefix is never re-read within the 5-minute cache TTL. Caching
   // would be a no-op at best and a 1.25x write premium for zero reads at
@@ -91,7 +93,7 @@ async function aiStructured(groups: PersonGroup[], dateLabel: string): Promise<A
   const msg = await client.messages.create({
     model: digestModel(),
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt(brand),
     messages: [{ role: "user", content: activityForPrompt(groups, dateLabel) }],
   });
   const text = msg.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
@@ -106,9 +108,10 @@ function fallbackOverview(activity: Activity): string {
 
 export async function summarize(
   activity: Activity,
-  opts: { dateLabel: string; signups?: WaitlistSignup[] },
+  opts: { dateLabel: string; signups?: WaitlistSignup[]; brand?: string },
 ): Promise<DigestContent> {
-  const subject = `Calderyn dev digest — ${opts.dateLabel}`;
+  const brand = opts.brand || "Calderyn";
+  const subject = `${brand} dev digest — ${opts.dateLabel}`;
   const signups = opts.signups ?? [];
   const gitEmpty = isEmpty(activity);
 
@@ -117,7 +120,7 @@ export async function summarize(
     return {
       subject,
       text: "No commits, PRs, or new waitlist signups in the last 24h.",
-      html: renderEmptyHtml(opts.dateLabel),
+      html: renderEmptyHtml(opts.dateLabel, brand),
       mode: "empty",
     };
   }
@@ -127,6 +130,7 @@ export async function summarize(
   // rendered deterministically and never sent to the model.
   let input: RenderInput = {
     dateLabel: opts.dateLabel,
+    brand,
     overview: gitEmpty ? "" : fallbackOverview(activity),
     prose: {},
     signups,
@@ -135,9 +139,9 @@ export async function summarize(
 
   if (!gitEmpty && process.env.ANTHROPIC_API_KEY) {
     try {
-      const ai = await aiStructured(groups, opts.dateLabel);
+      const ai = await aiStructured(groups, opts.dateLabel, brand);
       if (ai) {
-        input = { dateLabel: opts.dateLabel, overview: ai.overview, prose: ai.people, signups };
+        input = { dateLabel: opts.dateLabel, brand, overview: ai.overview, prose: ai.people, signups };
         mode = "ai";
       }
     } catch {

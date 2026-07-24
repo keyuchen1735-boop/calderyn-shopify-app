@@ -26,7 +26,7 @@ function signup(over: Partial<WaitlistSignup> = {}): WaitlistSignup {
     ...over,
   };
 }
-const input = (over: Record<string, unknown> = {}) => ({ dateLabel: "June 13, 2026", overview: "", prose: {}, ...over });
+const input = (over: Record<string, unknown> = {}) => ({ dateLabel: "June 13, 2026", brand: "Calderyn", overview: "", prose: {}, ...over });
 
 describe("renderHtml waitlist section", () => {
   it("shows a new-signups section with the derived name and email", () => {

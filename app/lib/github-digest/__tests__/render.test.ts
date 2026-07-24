@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyActor, groupByActor, renderHtml, renderText } from "../render.server";
+import { classifyActor, groupByActor, renderHtml, renderText, renderEmptyHtml } from "../render.server";
 import type { Activity, CommitInfo, PullInfo } from "../collect.server";
 
 function commit(subject: string, login: string, name = login): CommitInfo {
@@ -21,7 +21,7 @@ function activity(over: Partial<Activity>): Activity {
     ...over,
   };
 }
-const input = (over = {}) => ({ dateLabel: "June 11, 2026", overview: "", prose: {}, ...over });
+const input = (over = {}) => ({ dateLabel: "June 11, 2026", brand: "Calderyn", overview: "", prose: {}, ...over });
 
 describe("classifyActor", () => {
   it("maps keyuchen / eric to Eric (teal)", () => {
@@ -81,6 +81,13 @@ describe("renderHtml", () => {
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
   });
+
+  it("renders a custom brand's name and initial instead of Calderyn", () => {
+    const html = renderHtml(activity({}), groups, input({ brand: "Amoeba" }));
+    expect(html).toContain("Amoeba");
+    expect(html).not.toContain("Calderyn");
+    expect(html).toContain(">A</div>"); // logo badge initial
+  });
 });
 
 describe("renderText", () => {
@@ -93,5 +100,13 @@ describe("renderText", () => {
     expect(text).toContain("Summary line.");
     expect(text).toContain("John");
     expect(text).toContain("merged #75 John work");
+  });
+});
+
+describe("renderEmptyHtml", () => {
+  it("renders the given brand's name and initial in the quiet-day card", () => {
+    const html = renderEmptyHtml("June 11, 2026", "Amoeba");
+    expect(html).toContain("Amoeba");
+    expect(html).not.toContain("Calderyn");
   });
 });
