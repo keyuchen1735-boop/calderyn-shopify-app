@@ -24,8 +24,9 @@ const ASC_FIRST_SORT_COLS = new Set([
   "product",
   "campaign",
   "supplier",
-  "transfer",
+  "route",
   "sku",
+  "ref",
   "kind",
 ]);
 
