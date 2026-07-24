@@ -3,6 +3,31 @@
 Long-lived brain for the unattended nightly run. Records false positives (do NOT
 re-flag), recurring bug patterns, fixes that worked, and gate/CI gotchas.
 
+## 2026-07-24
+
+### Triage — window = last-24h on main. ZERO new commits landed: main tip still `495af9a` (2026-07-22 18:13 UTC, >24h old), exactly where the 07-23 run ended. No landed code → no landed bugs → no fixers dispatched, **NO fix PR opened** (Phase 4: no bug fixed ⇒ no PR). Did NOT create an empty fix branch or run `npm ci` (nothing to gate); repo left clean on `main`. (Same shape as the 07-22 all-clean night.)
+
+### Open-PR landscape — THREE overlapping "nightly-fix" PRs now target `main@495af9a`, ALL fixing the SAME 07-22 landed batch (sortable columns, chooser/onboarding, payments):
+- **#656** (ours, keyuchen, DRAFT, still open) — 07-23 run: logout one-click-reentry security fix (`058defe`) + stale login-button test fix (`6722bef`).
+- **#657** (Mezoh companion, non-draft) — 07-23: 6 fixes — discover short-token leak, onboarding per-item import (complete if ≥1), AccountChooser `return_to` on signed-out card, remembered-accounts keep-all-live-in-cookie/cap-only-render, `expressLoginLink`→`PayoutAccountError`, `merchant-notify money()` currency try/catch.
+- **#658** (Mezoh companion, non-draft) — 07-24 (tonight's PARALLEL run): 8 fixes — discover short-token (different impl), `pickProduct` idempotency guard, onboarding loader `.catch(()=>[])`, stripe `charge.refunded` state guard, stripe dispute `PAID_LIKE_STATES`, OrderListFamily ASC-first cols (add route/ref, remove transfer).
+
+### Phase 3 review — reviewed #657 + #658 with one fresh-context adversarial hunter each, verified against source at 495af9a. **BOTH CLEAN → NONE, posted NO comment** (bar: high-confidence only + frugal-on-GitHub; both PRs self-document their fixes). Skipped #656 (ours), #642 & #608 (unchanged, documented-CLEAN prior nights). Verified false-alarms (do NOT re-flag next night):
+- **#658 stripe:** `PAID_LIKE_STATES = {paid, fulfilled, partially_fulfilled, partially_refunded}`. `charge.refunded` post-transition state is always `refunded`|`partially_refunded` → new `.in("state",[...PAID_LIKE_STATES,"refunded"])` guard skips nothing legit. Dispute guard change only ADDS `partially_fulfilled`, drops nothing. CLEAN.
+- **#658 pickProduct idempotency:** `sourced_product_link.source_product_id uuid` column EXISTS (migration `20260705170000`). `.limit(1).maybeSingle()` safe. `PickResult.storeBuildSkipped` typed `string` → `"already_picked"` typechecks. CLEAN.
+- **#658 OrderListFamily:** `transfer` sorts by `created_at` (date) → correctly removed from ASC-first; `route`(Transfers text) & `ref`(Payments text) each single-screen → correctly added. CLEAN.
+- **#657 connect/billing:** `asPayoutError`(connect.server.ts:247), `isUnknownAccountError`(:240), `PayoutAccountError`(imported), `surfacingPayoutErrors`(billing route:23) ALL exist → typecheck holds. CLEAN.
+- **#657 AccountChooser:** `returnTo` is a prop destructured in `AccountRow` → in scope. CLEAN.
+- **#657 remembered-accounts:** un-broken loop bounded by `tokens ≤ MAX_STORED(8)`; cookie re-slice caps to MAX_STORED; `kept > accounts` breaks no invariant. CLEAN.
+- **#657 merchant-notify money():** catch → `amount.toFixed(2)` is display-only (email copy), never parsed. CLEAN.
+
+### COORDINATION FLAG (carry to next night): #657 and #658 make CONFLICTING edits to the SAME lines of `app/lib/sourcing/discover.server.ts` (`listDiscoverFeed` term filter) + `discover.server.test.ts`, and both edit `dashboard.onboarding.tsx` — only ONE merges cleanly; the second will conflict. They implement the short-token fix two DIFFERENT ways (#657: whole-trimmed-query as a single fallback term; #658: per-token `len>=2` + `return []` when none survive). Both fix the primary `tv`/`pc` leak correctly; multi-short-token semantics differ — a maintainer merge-order/pick decision, NOT a bug. **If #656/#657/#658 are still open next night, do NOT re-triage their items as new landed bugs — they are proposed fixes for THIS window's own code, already on their branches.**
+
+### Gate / environment
+- No gate run (no fixers). Prior 495af9a baseline (07-23 run) stands: setup/typecheck/lint/build 0; vitest = 8 environmental failures (6× `storefront-validation/browser.server`, 1× `storefront-command/command.server`, 1× `storefront-recipes/diagnostic-deck/bundle` — no-Chrome; 1× `ingest/product-facts` — missing Shopify env). CI billing outage still assumed present.
+- Notify sent (coordination heads-up: no landed work tonight; 3 overlapping nightly PRs await merge decision, #657↔#658 conflict on discover.server.ts).
+
+
 ## 2026-07-23
 
 ### Triage — window = last night's tip `06872c6` → now `495af9a`; 14 non-merge commits (mostly John Duncan). Fanned out 4 read-only hunters; A/C/D CLEAN, B found 1 security bug; a 2nd bug (landed test-gate regression) surfaced while gating the fix. 2 fixed → PR #656 (branch fix/nightly-2026-07-23, draft).
