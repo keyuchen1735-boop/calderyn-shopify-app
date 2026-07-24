@@ -79,7 +79,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
     error: url.searchParams.get("error"),
     returnTo: safeDashboardReturnTo(url.searchParams.get("return_to")),
     selling,
-    products: step === "products" && selling ? await listDiscoverFeed(8, selling) : [],
+    // A feed-query hiccup must not 500 the whole onboarding page — that would
+    // also hide the "Skip product suggestions" button, the user's only way out
+    // of the gate. Degrade to "no matching products" instead.
+    products:
+      step === "products" && selling
+        ? await listDiscoverFeed(8, selling).catch(() => [])
+        : [],
   };
 }
 
