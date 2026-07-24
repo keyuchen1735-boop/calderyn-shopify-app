@@ -56,7 +56,14 @@ export async function listDiscoverFeed(limit = 40, search = ""): Promise<Discove
     .limit(search ? 200 : limit);
   if (error) throw error;
 
-  const terms = search.toLowerCase().split(/\s+/).filter((term) => term.length > 2);
+  // 2+ chars so short but real product nouns ("tv", "pc") still filter; single
+  // characters are dropped as noise.
+  const trimmed = search.trim().toLowerCase();
+  const terms = trimmed.split(/\s+/).filter((term) => term.length >= 2);
+  // A non-empty search that yields no usable terms (only single characters)
+  // can't match anything meaningfully — return nothing rather than falling
+  // through to the unfiltered top feed, which would be shown as if it matched.
+  if (trimmed && !terms.length) return [];
   return ((data ?? []) as unknown as FeedRow[]).flatMap((row) => {
     const p = row.source_product;
     if (!p) return [];
@@ -88,6 +95,29 @@ export async function pickProduct(
   sourceProductId: string,
 ): Promise<PickResult> {
   const sb = getSupabase();
+
+  // Idempotency: a source product already picked by this shop must not be
+  // imported a second time. Without this, a retried import (the onboarding
+  // loop re-runs after a partial failure, or completeOnboarding throws after
+  // the picks land) would create duplicate catalog products, since the
+  // sourced_product_link uniqueness is on (shop_id, product_id), not the
+  // source. Return the existing product instead of writing a new one.
+  const existingLink = await sb
+    .from("sourced_product_link")
+    .select("product_id")
+    .eq("shop_id", shopId)
+    .eq("source_product_id", sourceProductId)
+    .limit(1)
+    .maybeSingle();
+  if (existingLink.error) throw existingLink.error;
+  if (existingLink.data) {
+    return {
+      productId: String((existingLink.data as { product_id: string }).product_id),
+      storeRunId: null,
+      storeBuildSkipped: "already_picked",
+    };
+  }
+
   const { data: src, error } = await sb
     .from("source_product")
     .select(

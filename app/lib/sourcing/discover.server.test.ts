@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   runCommand: vi.fn(),
   getStoreSettings: vi.fn(),
   feedLimit: vi.fn(),
+  linkMaybeSingle: vi.fn(),
 }));
 
 vi.mock("~/lib/supabase.server", () => ({
@@ -20,7 +21,14 @@ vi.mock("~/lib/supabase.server", () => ({
         return { select: () => ({ eq: () => ({ maybeSingle: mocks.sourceMaybeSingle }) }) };
       }
       if (table === "product_media") return { insert: mocks.mediaInsert };
-      if (table === "sourced_product_link") return { insert: mocks.linkInsert };
+      if (table === "sourced_product_link") {
+        return {
+          insert: mocks.linkInsert,
+          select: () => ({
+            eq: () => ({ eq: () => ({ limit: () => ({ maybeSingle: mocks.linkMaybeSingle }) }) }),
+          }),
+        };
+      }
       if (table === "source_product_score") {
         return { select: () => ({ order: () => ({ limit: mocks.feedLimit }) }) };
       }
@@ -72,6 +80,7 @@ beforeEach(() => {
   mocks.runCommand.mockResolvedValue({ status: "installed", versionId: "version-1", undo: null });
   mocks.getStoreSettings.mockResolvedValue({ composerEnabled: false });
   mocks.feedLimit.mockResolvedValue({ data: [], error: null });
+  mocks.linkMaybeSingle.mockResolvedValue({ data: null, error: null });
 });
 
 describe("listDiscoverFeed", () => {
@@ -100,6 +109,31 @@ describe("listDiscoverFeed", () => {
       expect.objectContaining({ sourceProductId: "fitness-1", title: "Resistance Bands" }),
     ]);
   });
+
+  it("matches a 2-character product noun instead of ignoring it", async () => {
+    mocks.feedLimit.mockResolvedValue({
+      data: [
+        { score: 80, source_product: { id: "tv-1", title: "TV Wall Mount", category: "Home", image_urls: [], unit_cost_cents: 1000, lead_time_days: 7, supplier: { name: "S", reliability_score: null } } },
+        { score: 70, source_product: { id: "kt-1", title: "Mini Blender", category: "Kitchen", image_urls: [], unit_cost_cents: 800, lead_time_days: 7, supplier: { name: "S", reliability_score: null } } },
+      ],
+      error: null,
+    });
+
+    await expect(listDiscoverFeed(8, "tv")).resolves.toEqual([
+      expect.objectContaining({ sourceProductId: "tv-1" }),
+    ]);
+  });
+
+  it("returns nothing (not the unfiltered feed) when the search has no usable terms", async () => {
+    mocks.feedLimit.mockResolvedValue({
+      data: [
+        { score: 80, source_product: { id: "x-1", title: "Anything", category: "Misc", image_urls: [], unit_cost_cents: 1000, lead_time_days: 7, supplier: { name: "S", reliability_score: null } } },
+      ],
+      error: null,
+    });
+
+    await expect(listDiscoverFeed(8, "a")).resolves.toEqual([]);
+  });
 });
 
 describe("pickProduct Store command handoff", () => {
@@ -112,6 +146,19 @@ describe("pickProduct Store command handoff", () => {
       shopId: "shop-1",
       command: { kind: "prompt", prompt: "Build my store", expectedDraftVersionId: null },
     });
+  });
+
+  it("is idempotent: an already-picked source returns the existing product without re-creating", async () => {
+    mocks.linkMaybeSingle.mockResolvedValue({ data: { product_id: "product-existing" }, error: null });
+
+    await expect(pickProduct("shop-1", "source-1")).resolves.toEqual({
+      productId: "product-existing",
+      storeRunId: null,
+      storeBuildSkipped: "already_picked",
+    });
+    expect(mocks.createProduct).not.toHaveBeenCalled();
+    expect(mocks.linkInsert).not.toHaveBeenCalled();
+    expect(mocks.runCommand).not.toHaveBeenCalled();
   });
 
   it("does not rebuild an existing live-bound catalog after a pick", async () => {
