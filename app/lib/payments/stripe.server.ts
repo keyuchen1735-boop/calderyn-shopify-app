@@ -350,7 +350,13 @@ export async function processStripeEvent(
       .from("orders")
       .update({ financial_status: resolvedState })
       .eq("shop_id", shopId)
-      .eq("id", orderRef);
+      .eq("id", orderRef)
+      // Only stamp a money-captured (or already-refunded) order. Without this an
+      // order whose transition above was skipped as illegal (e.g. still
+      // checkout_pending) would get financial_status='refunded' over a
+      // pre-payment state — an internally inconsistent row. `refunded` is
+      // included because a legal transition above may have just moved it there.
+      .in("state", [...PAID_LIKE_STATES, "refunded"]);
     if (finUpd.error) {
       console.error(
         `[stripe] charge.refunded ${event.id}: financial_status stamp to '${resolvedState}' failed for order ${orderRef}`,
@@ -395,7 +401,10 @@ export async function processStripeEvent(
         .update({ financial_status: "disputed" })
         .eq("shop_id", shopId)
         .eq("id", orderRef)
-        .in("state", ["paid", "fulfilled", "partially_refunded"]);
+        // Every money-captured state is disputable — mirror PAID_LIKE_STATES so
+        // this can't drift. A partially-fulfilled order is fully charged and can
+        // be charged back; omitting it left such disputes silently unflagged.
+        .in("state", [...PAID_LIKE_STATES]);
       if (finUpd.error) {
         console.error(
           `[stripe] charge.dispute.created ${event.id}: financial_status stamp to 'disputed' failed for order ${orderRef}`,
