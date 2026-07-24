@@ -44,3 +44,16 @@ describe("summarize with waitlist signups", () => {
     expect(content.mode).toBe("empty");
   });
 });
+
+describe("summarize brand", () => {
+  it("defaults the subject and header to Calderyn when no brand is given", async () => {
+    const content = await summarize(emptyActivity(), { dateLabel: "June 13, 2026", signups: [] });
+    expect(content.subject).toBe("Calderyn dev digest — June 13, 2026");
+  });
+
+  it("uses a custom brand in the subject when provided", async () => {
+    const content = await summarize(emptyActivity(), { dateLabel: "June 13, 2026", signups: [], brand: "Amoeba" });
+    expect(content.subject).toBe("Amoeba dev digest — June 13, 2026");
+    expect(content.html).toContain("Amoeba");
+  });
+});

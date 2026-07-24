@@ -11,17 +11,21 @@
 //   RESEND_API_KEY   Resend API key
 //   DIGEST_FROM      verified Resend sender, e.g. "Calderyn <digest@example.com>"
 // Optional env:
-//   DIGEST_REPO      default "keyuchen1735-boop/calderyn-shopify-app"
+//   DIGEST_REPO      default "keyuchen1735-boop/calderyn-shopify-app". When set to
+//                    a non-default repo, the Calderyn waitlist section is skipped
+//                    (that data belongs to the default repo/brand only).
+//   DIGEST_BRAND     default "Calderyn" — subject line + email header wordmark.
 //   DIGEST_TO        default "kennethlee@calderyncompany.com"
 //   ANTHROPIC_API_KEY  (already used by the in-app assistant) enables AI prose
 
 import { collectActivity } from "./collect.server";
-import { collectWaitlistSignups } from "./waitlist.server";
+import { collectWaitlistSignups, type WaitlistResult } from "./waitlist.server";
 import { summarize } from "./summarize.server";
 import { sendEmail, type DeliveryResult } from "~/lib/email/send.server";
 
 const DEFAULT_REPO = "keyuchen1735-boop/calderyn-shopify-app";
 const DEFAULT_TO = "kennethlee@calderyncompany.com";
+const DEFAULT_BRAND = "Calderyn";
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export interface DigestRunSummary {
@@ -74,6 +78,8 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
   const sinceMs = nowMs - WINDOW_MS;
   const sinceIso = new Date(sinceMs).toISOString();
   const repo = process.env.DIGEST_REPO || DEFAULT_REPO;
+  const brand = process.env.DIGEST_BRAND || DEFAULT_BRAND;
+  const isDefaultRepo = repo === DEFAULT_REPO;
 
   const token = process.env.GITHUB_TOKEN;
   if (!token) {
@@ -90,12 +96,20 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
   const notes = [...activity.notes];
 
   // New waitlist signups in the same trailing window. Independent of GitHub:
-  // a failure here is surfaced as a note, not a thrown digest (rule 12).
-  const waitlist = await collectWaitlistSignups({ sinceMs });
-  if (waitlist.note) notes.push(waitlist.note);
+  // a failure here is surfaced as a note, not a thrown digest (rule 12). The
+  // waitlist table is Calderyn-specific, so it's only collected when this
+  // digest is reporting on the default (Calderyn) repo.
+  let waitlist: WaitlistResult;
+  if (isDefaultRepo) {
+    waitlist = await collectWaitlistSignups({ sinceMs });
+    if (waitlist.note) notes.push(waitlist.note);
+  } else {
+    waitlist = { signups: [], note: null };
+    notes.push(`Waitlist signups skipped — digest repo (${repo}) is not the default Calderyn repo.`);
+  }
 
   const dateLabel = dateLabelET(nowMs);
-  const content = await summarize(activity, { dateLabel, signups: waitlist.signups });
+  const content = await summarize(activity, { dateLabel, signups: waitlist.signups, brand });
   if (process.env.ANTHROPIC_API_KEY && content.mode === "template") {
     notes.push("AI summary unavailable — fell back to grouped template.");
   }

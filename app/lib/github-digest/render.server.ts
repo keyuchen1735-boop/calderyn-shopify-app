@@ -84,20 +84,23 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Email-safe Calderyn logo lockup: a navy rounded-square "C" badge (a CSS
-// recreation of the SVG favicon mark, since email clients strip SVG/data-URIs)
-// next to the wordmark.
-function logoLockup(): string {
+// Email-safe brand logo lockup: a navy rounded-square badge lettered with the
+// brand's first initial (a CSS recreation of the SVG favicon mark, since email
+// clients strip SVG/data-URIs) next to the wordmark.
+function logoLockup(brand: string): string {
+  const initial = esc(brand.charAt(0).toUpperCase() || "?");
   return `<table role="presentation" cellpadding="0" cellspacing="0"><tr>
     <td style="vertical-align:middle">
-      <div style="width:34px;height:34px;border-radius:9px;background:${BRAND.navy};text-align:center;line-height:34px;font-family:${FONT};font-weight:800;font-size:20px;color:${BRAND.mint}">C</div>
+      <div style="width:34px;height:34px;border-radius:9px;background:${BRAND.navy};text-align:center;line-height:34px;font-family:${FONT};font-weight:800;font-size:20px;color:${BRAND.mint}">${initial}</div>
     </td>
-    <td style="vertical-align:middle;padding-left:11px;font-size:21px;font-weight:750;color:${BRAND.navy};letter-spacing:-0.02em">Calderyn</td>
+    <td style="vertical-align:middle;padding-left:11px;font-size:21px;font-weight:750;color:${BRAND.navy};letter-spacing:-0.02em">${esc(brand)}</td>
   </tr></table>`;
 }
 
 export interface RenderInput {
   dateLabel: string;
+  /** Brand name for the header lockup and footer (defaults to "Calderyn"). */
+  brand: string;
   /** Plain-English overview of the whole day (may be empty). */
   overview: string;
   /** actor.key -> one-line plain-English summary of what they did (may be absent). */
@@ -234,7 +237,7 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
         <tr><td style="height:4px;background:${BRAND.accent};font-size:0;line-height:0">&nbsp;</td></tr>
         <tr><td style="padding:22px 28px 6px">
           <table role="presentation" width="100%"><tr>
-            <td style="vertical-align:middle">${logoLockup()}</td>
+            <td style="vertical-align:middle">${logoLockup(input.brand)}</td>
             <td align="right" style="font-size:13px;color:${BRAND.text3};vertical-align:middle">${esc(input.dateLabel)}</td>
           </tr></table>
           <div style="font-size:13px;color:${BRAND.text2};margin-top:6px">Daily dev digest</div>
@@ -255,7 +258,7 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
 
 /** Plaintext twin for clients that don't render HTML. */
 export function renderText(activity: Activity, groups: PersonGroup[], input: RenderInput): string {
-  const lines: string[] = [`CALDERYN — Daily dev digest`, input.dateLabel, ""];
+  const lines: string[] = [`${input.brand.toUpperCase()} — Daily dev digest`, input.dateLabel, ""];
   if (input.overview) lines.push(input.overview, "");
   for (const g of groups) {
     lines.push(`${g.actor.label} (${personMeta(g) || "no changes"})`);
@@ -283,13 +286,13 @@ export function renderText(activity: Activity, groups: PersonGroup[], input: Ren
 }
 
 /** Branded "quiet day" card. */
-export function renderEmptyHtml(dateLabel: string): string {
+export function renderEmptyHtml(dateLabel: string, brand: string): string {
   return `<!doctype html><html><body style="margin:0;padding:0;background:${BRAND.bg}">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.bg};padding:16px"><tr><td align="center">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background:${BRAND.card};border:1px solid ${BRAND.border};border-radius:16px;overflow:hidden;font-family:${FONT}">
       <tr><td style="height:4px;background:${BRAND.accent};font-size:0;line-height:0">&nbsp;</td></tr>
       <tr><td style="padding:22px 28px">
-        ${logoLockup()}
+        ${logoLockup(brand)}
         <div style="font-size:13px;color:${BRAND.text2};margin-top:6px">Daily dev digest · ${esc(dateLabel)}</div>
         <p style="margin:16px 0 0;color:${BRAND.text1};font-size:15px">No commits or pull requests in the last 24 hours.</p>
       </td></tr>
