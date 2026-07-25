@@ -74,12 +74,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? "products"
       : "import"
     : "contact";
+  // Product suggestions are non-essential: a global-catalog read hiccup must not
+  // throw out of the loader and wedge the mandatory onboarding gate — degrade to
+  // an empty list so the merchant can still search again or finish without them.
+  let products: DiscoverFeedItem[] = [];
+  if (step === "products" && selling) {
+    try {
+      products = await listDiscoverFeed(8, selling);
+    } catch (err) {
+      console.error("[onboarding] discover feed lookup failed", err);
+    }
+  }
   return {
     step,
     error: url.searchParams.get("error"),
     returnTo: safeDashboardReturnTo(url.searchParams.get("return_to")),
     selling,
-    products: step === "products" && selling ? await listDiscoverFeed(8, selling) : [],
+    products,
   };
 }
 
