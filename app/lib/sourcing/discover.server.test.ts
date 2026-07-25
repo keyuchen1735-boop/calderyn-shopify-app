@@ -100,6 +100,33 @@ describe("listDiscoverFeed", () => {
       expect.objectContaining({ sourceProductId: "fitness-1", title: "Resistance Bands" }),
     ]);
   });
+
+  it("still filters when the whole query is short (no term survives the length cut)", async () => {
+    const product = (id: string, title: string, category: string) => ({
+      score: 80,
+      source_product: {
+        id,
+        title,
+        category,
+        image_urls: [],
+        unit_cost_cents: 1000,
+        lead_time_days: 7,
+        supplier: { name: "Supplier", reliability_score: null },
+      },
+    });
+    mocks.feedLimit.mockResolvedValue({
+      data: [
+        product("tv-1", "Smart TV", "Electronics"),
+        product("kitchen-1", "Mini Blender", "Kitchen"),
+      ],
+      error: null,
+    });
+
+    // "tv" is 2 chars — a naive length>2 filter drops it and returns everything.
+    await expect(listDiscoverFeed(8, "tv")).resolves.toEqual([
+      expect.objectContaining({ sourceProductId: "tv-1", title: "Smart TV" }),
+    ]);
+  });
 });
 
 describe("pickProduct Store command handoff", () => {

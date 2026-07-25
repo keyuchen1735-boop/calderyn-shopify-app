@@ -56,7 +56,12 @@ export async function listDiscoverFeed(limit = 40, search = ""): Promise<Discove
     .limit(search ? 200 : limit);
   if (error) throw error;
 
-  const terms = search.toLowerCase().split(/\s+/).filter((term) => term.length > 2);
+  // Drop short noise words from multi-word queries, but never let that empty the
+  // term list for a deliberately short search (e.g. "tv", "pj") — an all-short
+  // query would otherwise skip the filter entirely and return the unfiltered feed.
+  const trimmed = search.trim().toLowerCase();
+  let terms = trimmed.split(/\s+/).filter((term) => term.length > 2);
+  if (!terms.length && trimmed) terms = [trimmed];
   return ((data ?? []) as unknown as FeedRow[]).flatMap((row) => {
     const p = row.source_product;
     if (!p) return [];
