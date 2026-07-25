@@ -108,9 +108,10 @@ function fallbackOverview(activity: Activity): string {
 
 export async function summarize(
   activity: Activity,
-  opts: { dateLabel: string; signups?: WaitlistSignup[]; brand?: string },
+  opts: { dateLabel: string; signups?: WaitlistSignup[]; brand?: string; repo?: string },
 ): Promise<DigestContent> {
   const brand = opts.brand || "Calderyn";
+  const repo = opts.repo;
   const subject = `${brand} dev digest — ${opts.dateLabel}`;
   const signups = opts.signups ?? [];
   const gitEmpty = isEmpty(activity);
@@ -131,6 +132,7 @@ export async function summarize(
   let input: RenderInput = {
     dateLabel: opts.dateLabel,
     brand,
+    repo,
     overview: gitEmpty ? "" : fallbackOverview(activity),
     prose: {},
     signups,
@@ -141,7 +143,7 @@ export async function summarize(
     try {
       const ai = await aiStructured(groups, opts.dateLabel, brand);
       if (ai) {
-        input = { dateLabel: opts.dateLabel, brand, overview: ai.overview, prose: ai.people, signups };
+        input = { dateLabel: opts.dateLabel, brand, repo, overview: ai.overview, prose: ai.people, signups };
         mode = "ai";
       }
     } catch {

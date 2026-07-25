@@ -109,7 +109,7 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
   }
 
   const dateLabel = dateLabelET(nowMs);
-  const content = await summarize(activity, { dateLabel, signups: waitlist.signups, brand });
+  const content = await summarize(activity, { dateLabel, signups: waitlist.signups, brand, repo });
   if (process.env.ANTHROPIC_API_KEY && content.mode === "template") {
     notes.push("AI summary unavailable — fell back to grouped template.");
   }

@@ -88,6 +88,18 @@ describe("renderHtml", () => {
     expect(html).not.toContain("Calderyn");
     expect(html).toContain(">A</div>"); // logo badge initial
   });
+
+  it("points the footer link at the digest's own repo, not a hardcoded Calderyn one", () => {
+    const html = renderHtml(activity({}), groups, input({ brand: "Amoeba", repo: "Mezoh/hive-mind" }));
+    expect(html).toContain("https://github.com/Mezoh/hive-mind");
+    expect(html).toContain(">hive-mind</a>");
+    expect(html).not.toContain("calderyn-shopify-app");
+  });
+
+  it("defaults the footer link to the Calderyn repo when no repo is given", () => {
+    const html = renderHtml(activity({}), groups, input());
+    expect(html).toContain("https://github.com/keyuchen1735-boop/calderyn-shopify-app");
+  });
 });
 
 describe("renderText", () => {

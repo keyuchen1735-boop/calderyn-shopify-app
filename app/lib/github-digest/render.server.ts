@@ -26,8 +26,16 @@ const BRAND = {
   navy: "#1a1a2e",
   mint: "#7ee0c3",
 } as const;
-const REPO_URL = "https://github.com/keyuchen1735-boop/calderyn-shopify-app";
+const DEFAULT_REPO = "keyuchen1735-boop/calderyn-shopify-app";
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+/** Footer link target + label for the digest's source repo. Follows DIGEST_REPO
+ *  so a re-pointed digest links to the repo it actually reports on rather than a
+ *  hardcoded Calderyn URL. */
+function repoFooter(repo?: string): { url: string; label: string } {
+  const slug = repo || DEFAULT_REPO;
+  return { url: `https://github.com/${slug}`, label: slug.split("/").pop() || slug };
+}
 
 export interface Actor {
   key: string;
@@ -101,6 +109,8 @@ export interface RenderInput {
   dateLabel: string;
   /** Brand name for the header lockup and footer (defaults to "Calderyn"). */
   brand: string;
+  /** Source repo (owner/name) for the footer link; defaults to the Calderyn repo. */
+  repo?: string;
   /** Plain-English overview of the whole day (may be empty). */
   overview: string;
   /** actor.key -> one-line plain-English summary of what they did (may be absent). */
@@ -229,6 +239,7 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
   const overviewHtml = input.overview
     ? `<p style="margin:0 0 4px;color:${BRAND.text1};font-size:15px;line-height:1.6">${esc(input.overview)}</p>`
     : "";
+  const footer = repoFooter(input.repo);
 
   return `<!doctype html><html><body style="margin:0;padding:0;background:${BRAND.bg}">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.bg};padding:16px">
@@ -248,7 +259,7 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
         </td></tr>
         ${waitlistSectionHtml(input.signups ?? [])}
         <tr><td style="padding:16px 26px 24px;border-top:1px solid ${BRAND.border}">
-          <div style="font-size:12px;color:${BRAND.text3}">Automated daily digest · <a href="${REPO_URL}" style="color:${BRAND.text3}">calderyn-shopify-app</a></div>
+          <div style="font-size:12px;color:${BRAND.text3}">Automated daily digest · <a href="${esc(footer.url)}" style="color:${BRAND.text3}">${esc(footer.label)}</a></div>
         </td></tr>
       </table>
     </td></tr>
@@ -281,7 +292,7 @@ export function renderText(activity: Activity, groups: PersonGroup[], input: Ren
     lines.push("");
   }
   for (const n of activity.notes) lines.push(`Note: ${n}`);
-  lines.push("", `Automated daily digest · ${REPO_URL}`);
+  lines.push("", `Automated daily digest · ${repoFooter(input.repo).url}`);
   return lines.join("\n").trimEnd();
 }
 
