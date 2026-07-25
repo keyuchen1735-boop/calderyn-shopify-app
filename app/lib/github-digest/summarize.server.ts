@@ -7,7 +7,7 @@
 // overview and the per-person meta still attributes the work — the digest never
 // degrades to nothing (rule 12). Rendering itself lives in render.server.ts.
 
-import type { Activity } from "./collect.server";
+import { repoLabel, type Activity } from "./collect.server";
 import {
   groupByActor,
   renderHtml,
@@ -35,10 +35,16 @@ function isEmpty(a: Activity): boolean {
   return a.commits.length === 0 && a.mergedPRs.length === 0 && a.openedPRs.length === 0;
 }
 
-function systemPrompt(brand: string): string {
+function systemPrompt(brand: string, repos: string[]): string {
   return [
     `You write a daily git-activity digest for the non-technical founder of ${brand}.`,
     "You are given the day's work grouped by person.",
+    ...(repos.length > 1
+      ? [
+          `The work spans ${repos.length} repositories (${repos.map(repoLabel).join(", ")}); each line is tagged with its repo in square brackets.`,
+          "Say which part of the product each person worked on when it is not obvious, but never print the bracketed tags or repo names verbatim.",
+        ]
+      : []),
     'Respond with ONLY a JSON object (no markdown, no code fences) of the exact shape:',
     '{"overview": string, "people": { "<key>": string }}',
     '- "overview": 2-3 plain-English sentences about the day overall. No commit hashes, no branch names, no git jargon.',
@@ -47,18 +53,25 @@ function systemPrompt(brand: string): string {
   ].join(" ");
 }
 
-function activityForPrompt(groups: PersonGroup[], dateLabel: string): string {
+function activityForPrompt(groups: PersonGroup[], dateLabel: string, repos: string[]): string {
+  // Each line is tagged with its repo when several are tracked, so the model can
+  // say which product a person worked on rather than blurring them together.
+  const multiRepo = repos.length > 1;
+  const tag = (repo: string) => (multiRepo && repo ? `[${repoLabel(repo)}] ` : "");
   const blocks = groups.map((g) => {
-    const commitLines = g.commits.slice(0, 40).map((c) => `    - ${c.subject}`);
-    const prLines = g.mergedPRs.slice(0, 20).map((p) => `    - merged #${p.number} ${p.title}`);
-    const openLines = g.openedPRs.slice(0, 10).map((p) => `    - opened #${p.number} ${p.title}`);
+    const commitLines = g.commits.slice(0, 40).map((c) => `    - ${tag(c.repo)}${c.subject}`);
+    const prLines = g.mergedPRs.slice(0, 20).map((p) => `    - ${tag(p.repo)}merged #${p.number} ${p.title}`);
+    const openLines = g.openedPRs.slice(0, 10).map((p) => `    - ${tag(p.repo)}opened #${p.number} ${p.title}`);
     return [
       `Person key "${g.actor.key}" (${g.actor.label}): ${g.commits.length} commits, ${g.mergedPRs.length} merged, ${g.openedPRs.length} opened`,
       ...(commitLines.length ? ["  commits:", ...commitLines] : []),
       ...(prLines.length || openLines.length ? ["  pull requests:", ...prLines, ...openLines] : []),
     ].join("\n");
   });
-  return [`Date: ${dateLabel}`, "", ...blocks].join("\n");
+  const header = multiRepo
+    ? [`Date: ${dateLabel}`, `Repositories covered: ${repos.map(repoLabel).join(", ")}`]
+    : [`Date: ${dateLabel}`];
+  return [...header, "", ...blocks].join("\n");
 }
 
 function parseAi(raw: string): AiResult | null {
@@ -83,7 +96,12 @@ function parseAi(raw: string): AiResult | null {
   return { overview: obj.overview, people };
 }
 
-async function aiStructured(groups: PersonGroup[], dateLabel: string, brand: string): Promise<AiResult | null> {
+async function aiStructured(
+  groups: PersonGroup[],
+  dateLabel: string,
+  brand: string,
+  repos: string[],
+): Promise<AiResult | null> {
   const client = getAnthropic();
   // No cache_control: the system prompt is ~150 tokens, below this model's
   // 2048-token minimum cacheable prefix, and this runs once per day (cron),
@@ -93,8 +111,8 @@ async function aiStructured(groups: PersonGroup[], dateLabel: string, brand: str
   const msg = await client.messages.create({
     model: digestModel(),
     max_tokens: 1024,
-    system: systemPrompt(brand),
-    messages: [{ role: "user", content: activityForPrompt(groups, dateLabel) }],
+    system: systemPrompt(brand, repos),
+    messages: [{ role: "user", content: activityForPrompt(groups, dateLabel, repos) }],
   });
   const text = msg.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
   return parseAi(text);
@@ -137,9 +155,10 @@ export async function summarize(
   };
   let mode: DigestContent["mode"] = "template";
 
+  const repos = activity.repos?.length ? activity.repos : [activity.repo].filter(Boolean);
   if (!gitEmpty && process.env.ANTHROPIC_API_KEY) {
     try {
-      const ai = await aiStructured(groups, opts.dateLabel, brand);
+      const ai = await aiStructured(groups, opts.dateLabel, brand, repos);
       if (ai) {
         input = { dateLabel: opts.dateLabel, brand, overview: ai.overview, prose: ai.people, signups };
         mode = "ai";

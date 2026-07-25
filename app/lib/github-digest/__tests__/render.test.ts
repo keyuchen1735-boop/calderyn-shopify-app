@@ -2,15 +2,16 @@ import { describe, it, expect } from "vitest";
 import { classifyActor, groupByActor, renderHtml, renderText, renderEmptyHtml } from "../render.server";
 import type { Activity, CommitInfo, PullInfo } from "../collect.server";
 
-function commit(subject: string, login: string, name = login): CommitInfo {
-  return { sha: subject + login, subject, author: name, login, branch: "main", isoDate: "2026-06-11T12:00:00Z" };
+function commit(subject: string, login: string, name = login, repo = "owner/repo"): CommitInfo {
+  return { sha: subject + login, subject, author: name, login, branch: "main", isoDate: "2026-06-11T12:00:00Z", repo };
 }
-function pull(number: number, title: string, login: string): PullInfo {
-  return { number, title, body: "", author: login, url: `https://github.com/x/pull/${number}` };
+function pull(number: number, title: string, login: string, repo = "owner/repo"): PullInfo {
+  return { number, title, body: "", author: login, url: `https://github.com/x/pull/${number}`, repo };
 }
 function activity(over: Partial<Activity>): Activity {
   return {
     repo: "owner/repo",
+    repos: ["owner/repo"],
     sinceIso: "2026-06-10T14:00:00Z",
     commits: [],
     mergedPRs: [],

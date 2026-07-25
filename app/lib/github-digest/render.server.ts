@@ -9,7 +9,7 @@
 // People are color-coded so "who did what" reads at a glance: Eric = teal,
 // John = terracotta, anyone else = neutral grey.
 
-import type { Activity, CommitInfo, PullInfo } from "./collect.server";
+import { repoLabel, type Activity, type CommitInfo, type PullInfo } from "./collect.server";
 import type { WaitlistSignup } from "./waitlist.server";
 
 const BRAND = {
@@ -26,8 +26,16 @@ const BRAND = {
   navy: "#1a1a2e",
   mint: "#7ee0c3",
 } as const;
-const REPO_URL = "https://github.com/keyuchen1735-boop/calderyn-shopify-app";
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+function repoUrl(repo: string): string {
+  return `https://github.com/${repo}`;
+}
+
+/** Repos covered by this digest, falling back to the single `repo` label. */
+function repoList(activity: Activity): string[] {
+  return activity.repos?.length ? activity.repos : [activity.repo].filter(Boolean);
+}
 
 export interface Actor {
   key: string;
@@ -109,10 +117,18 @@ export interface RenderInput {
   signups?: WaitlistSignup[];
 }
 
-function prLine(p: PullInfo): { html: string; text: string } {
+// When the digest tracks several repos, each PR carries a small repo chip so
+// "who did what" stays readable across products; with one repo it is redundant.
+function prLine(p: PullInfo, showRepo: boolean): { html: string; text: string } {
+  const label = p.repo ? repoLabel(p.repo) : "";
+  const chipHtml =
+    showRepo && label
+      ? ` <span style="display:inline-block;background:${BRAND.bg};border:1px solid ${BRAND.border};border-radius:5px;padding:1px 6px;font-size:11px;color:${BRAND.text2};font-weight:600">${esc(label)}</span>`
+      : "";
+  const chipText = showRepo && label ? ` [${label}]` : "";
   return {
-    html: `<a href="${esc(p.url)}" style="color:${BRAND.accent};text-decoration:none;font-weight:600">#${p.number}</a> <span style="color:${BRAND.text1}">${esc(p.title)}</span>`,
-    text: `#${p.number} ${p.title}`,
+    html: `<a href="${esc(p.url)}" style="color:${BRAND.accent};text-decoration:none;font-weight:600">#${p.number}</a> <span style="color:${BRAND.text1}">${esc(p.title)}</span>${chipHtml}`,
+    text: `#${p.number} ${p.title}${chipText}`,
   };
 }
 
@@ -122,6 +138,29 @@ function personMeta(g: PersonGroup): string {
   if (g.mergedPRs.length) bits.push(`${g.mergedPRs.length} merged`);
   if (g.openedPRs.length) bits.push(`${g.openedPRs.length} opened`);
   return bits.join(" · ");
+}
+
+/**
+ * Per-repo commit split for one person, e.g. "hive-mind 8 · amoeba-landing-page 3".
+ * Returns "" for a single-repo digest (where the split says nothing) or when the
+ * person's commits all landed in one repo anyway.
+ */
+function personRepoSplit(g: PersonGroup, repos: string[]): string {
+  if (repos.length < 2) return "";
+  const counts = new Map<string, number>();
+  for (const c of g.commits) {
+    if (!c.repo) continue;
+    counts.set(c.repo, (counts.get(c.repo) ?? 0) + 1);
+  }
+  for (const p of [...g.mergedPRs, ...g.openedPRs]) {
+    if (!p.repo) continue;
+    if (!counts.has(p.repo)) counts.set(p.repo, 0);
+  }
+  if (counts.size < 2) return "";
+  return repos
+    .filter((r) => counts.has(r))
+    .map((r) => `${repoLabel(r)} ${counts.get(r)}`)
+    .join(" · ");
 }
 
 // Local-parts that are role/non-personal mailboxes — we lead with the email
@@ -196,6 +235,8 @@ function waitlistSectionHtml(signups: WaitlistSignup[]): string {
 
 /** Branded HTML email. Table + inline-style layout for broad email-client support. */
 export function renderHtml(activity: Activity, groups: PersonGroup[], input: RenderInput): string {
+  const repos = repoList(activity);
+  const multiRepo = repos.length > 1;
   const personBlocks = groups
     .map((g) => {
       const initial = esc(g.actor.label.charAt(0).toUpperCase() || "?");
@@ -203,7 +244,11 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
       const proseHtml = prose
         ? `<p style="margin:6px 0 0;color:${BRAND.text2};font-size:14px;line-height:1.5">${esc(prose)}</p>`
         : "";
-      const merged = g.mergedPRs.slice(0, 8).map(prLine);
+      const split = personRepoSplit(g, repos);
+      const splitHtml = split
+        ? `<div style="margin-top:4px;font-size:12px;color:${BRAND.text3}">${esc(split)}</div>`
+        : "";
+      const merged = g.mergedPRs.slice(0, 8).map((p) => prLine(p, multiRepo));
       const moreMerged = g.mergedPRs.length > merged.length ? `<div style="color:${BRAND.text3};font-size:13px;margin-top:4px">+${g.mergedPRs.length - merged.length} more</div>` : "";
       const mergedHtml = merged.length
         ? `<div style="margin-top:10px">${merged
@@ -218,6 +263,7 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
           </td>
           <td valign="top" style="padding-left:12px">
             <div style="font-size:16px;font-weight:650;color:${BRAND.text1};letter-spacing:-0.01em">${esc(g.actor.label)}<span style="color:${BRAND.text3};font-weight:500;font-size:13px"> · ${esc(personMeta(g)) || "no changes"}</span></div>
+            ${splitHtml}
             ${proseHtml}
             ${mergedHtml}
           </td>
@@ -248,7 +294,9 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
         </td></tr>
         ${waitlistSectionHtml(input.signups ?? [])}
         <tr><td style="padding:16px 26px 24px;border-top:1px solid ${BRAND.border}">
-          <div style="font-size:12px;color:${BRAND.text3}">Automated daily digest · <a href="${REPO_URL}" style="color:${BRAND.text3}">calderyn-shopify-app</a></div>
+          <div style="font-size:12px;color:${BRAND.text3}">Automated daily digest · ${repos
+            .map((r) => `<a href="${esc(repoUrl(r))}" style="color:${BRAND.text3}">${esc(repoLabel(r))}</a>`)
+            .join(" · ")}</div>
         </td></tr>
       </table>
     </td></tr>
@@ -258,14 +306,18 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
 
 /** Plaintext twin for clients that don't render HTML. */
 export function renderText(activity: Activity, groups: PersonGroup[], input: RenderInput): string {
+  const repos = repoList(activity);
+  const multiRepo = repos.length > 1;
   const lines: string[] = [`${input.brand.toUpperCase()} — Daily dev digest`, input.dateLabel, ""];
   if (input.overview) lines.push(input.overview, "");
   for (const g of groups) {
     lines.push(`${g.actor.label} (${personMeta(g) || "no changes"})`);
+    const split = personRepoSplit(g, repos);
+    if (split) lines.push(`  ${split}`);
     const prose = input.prose[g.actor.key];
     if (prose) lines.push(`  ${prose}`);
     const merged = g.mergedPRs.slice(0, 8);
-    for (const p of merged) lines.push(`  merged ${prLine(p).text}`);
+    for (const p of merged) lines.push(`  merged ${prLine(p, multiRepo).text}`);
     if (g.mergedPRs.length > merged.length) lines.push(`  +${g.mergedPRs.length - merged.length} more merged`);
     lines.push("");
   }
@@ -281,7 +333,7 @@ export function renderText(activity: Activity, groups: PersonGroup[], input: Ren
     lines.push("");
   }
   for (const n of activity.notes) lines.push(`Note: ${n}`);
-  lines.push("", `Automated daily digest · ${REPO_URL}`);
+  lines.push("", `Automated daily digest · ${repos.map(repoUrl).join(" · ")}`);
   return lines.join("\n").trimEnd();
 }
 

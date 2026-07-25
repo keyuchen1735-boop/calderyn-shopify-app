@@ -6,6 +6,7 @@ import type { WaitlistSignup } from "../waitlist.server";
 function emptyActivity(over: Partial<Activity> = {}): Activity {
   return {
     repo: "owner/repo",
+    repos: ["owner/repo"],
     sinceIso: "2026-06-12T14:00:00Z",
     commits: [],
     mergedPRs: [],

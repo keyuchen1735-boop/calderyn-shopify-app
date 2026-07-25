@@ -11,14 +11,15 @@
 //   RESEND_API_KEY   Resend API key
 //   DIGEST_FROM      verified Resend sender, e.g. "Calderyn <digest@example.com>"
 // Optional env:
-//   DIGEST_REPO      default "keyuchen1735-boop/calderyn-shopify-app". When set to
-//                    a non-default repo, the Calderyn waitlist section is skipped
-//                    (that data belongs to the default repo/brand only).
+//   DIGEST_REPO      one repo, or several comma-separated ("owner/a, owner/b").
+//                    Default "keyuchen1735-boop/calderyn-shopify-app". The Calderyn
+//                    waitlist section is included only while that default repo is
+//                    among the tracked repos (that data is Calderyn-specific).
 //   DIGEST_BRAND     default "Calderyn" — subject line + email header wordmark.
 //   DIGEST_TO        default "kennethlee@calderyncompany.com"
 //   ANTHROPIC_API_KEY  (already used by the in-app assistant) enables AI prose
 
-import { collectActivity } from "./collect.server";
+import { collectMultiRepoActivity, parseRepoList } from "./collect.server";
 import { collectWaitlistSignups, type WaitlistResult } from "./waitlist.server";
 import { summarize } from "./summarize.server";
 import { sendEmail, type DeliveryResult } from "~/lib/email/send.server";
@@ -28,8 +29,19 @@ const DEFAULT_TO = "kennethlee@calderyncompany.com";
 const DEFAULT_BRAND = "Calderyn";
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 
-export interface DigestRunSummary {
+/** Per-repo counts, so a repo that reported nothing is visibly distinct from one that failed. */
+export interface RepoRunCounts {
   repo: string;
+  commitCount: number;
+  mergedPRCount: number;
+  openedPRCount: number;
+}
+
+export interface DigestRunSummary {
+  /** Comma-joined repo label; see `repos` for the list. */
+  repo: string;
+  repos: string[];
+  perRepo: RepoRunCounts[];
   sinceIso: string;
   commitCount: number;
   mergedPRCount: number;
@@ -54,9 +66,11 @@ function dateLabelET(nowMs: number): string {
   }).format(new Date(nowMs));
 }
 
-function empty(repo: string, sinceIso: string, error: string): DigestRunSummary {
+function empty(repos: string[], sinceIso: string, error: string): DigestRunSummary {
   return {
-    repo,
+    repo: repos.join(", "),
+    repos,
+    perRepo: [],
     sinceIso,
     commitCount: 0,
     mergedPRCount: 0,
@@ -77,35 +91,39 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
   const nowMs = opts?.nowMs ?? Date.now();
   const sinceMs = nowMs - WINDOW_MS;
   const sinceIso = new Date(sinceMs).toISOString();
-  const repo = process.env.DIGEST_REPO || DEFAULT_REPO;
+  const repos = parseRepoList(process.env.DIGEST_REPO);
+  if (repos.length === 0) repos.push(DEFAULT_REPO);
   const brand = process.env.DIGEST_BRAND || DEFAULT_BRAND;
-  const isDefaultRepo = repo === DEFAULT_REPO;
+  const tracksCalderyn = repos.includes(DEFAULT_REPO);
 
   const token = process.env.GITHUB_TOKEN;
   if (!token) {
-    return empty(repo, sinceIso, "GITHUB_TOKEN is not set");
+    return empty(repos, sinceIso, "GITHUB_TOKEN is not set");
   }
 
-  let activity;
-  try {
-    activity = await collectActivity({ repo, token, sinceMs });
-  } catch (err) {
-    return empty(repo, sinceIso, `collect failed: ${err instanceof Error ? err.message : String(err)}`);
+  const { merged: activity, perRepo } = await collectMultiRepoActivity({ repos, token, sinceMs });
+
+  // Every configured repo failing is a real failure, not a quiet "no activity"
+  // day — surface it so the cron shows red rather than mailing a false all-clear.
+  if (perRepo.length === 0) {
+    return empty(repos, sinceIso, `collect failed for every repo: ${activity.notes.join("; ")}`);
   }
 
   const notes = [...activity.notes];
 
   // New waitlist signups in the same trailing window. Independent of GitHub:
   // a failure here is surfaced as a note, not a thrown digest (rule 12). The
-  // waitlist table is Calderyn-specific, so it's only collected when this
-  // digest is reporting on the default (Calderyn) repo.
+  // waitlist table is Calderyn-specific, so it's only collected while the
+  // default (Calderyn) repo is among the tracked repos.
   let waitlist: WaitlistResult;
-  if (isDefaultRepo) {
+  if (tracksCalderyn) {
     waitlist = await collectWaitlistSignups({ sinceMs });
     if (waitlist.note) notes.push(waitlist.note);
   } else {
     waitlist = { signups: [], note: null };
-    notes.push(`Waitlist signups skipped — digest repo (${repo}) is not the default Calderyn repo.`);
+    notes.push(
+      `Waitlist signups skipped — tracked repos (${repos.join(", ")}) do not include the default Calderyn repo.`,
+    );
   }
 
   const dateLabel = dateLabelET(nowMs);
@@ -139,7 +157,14 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
   }
 
   return {
-    repo,
+    repo: activity.repo,
+    repos,
+    perRepo: perRepo.map((a) => ({
+      repo: a.repo,
+      commitCount: a.commits.length,
+      mergedPRCount: a.mergedPRs.length,
+      openedPRCount: a.openedPRs.length,
+    })),
     sinceIso,
     commitCount: activity.commits.length,
     mergedPRCount: activity.mergedPRs.length,

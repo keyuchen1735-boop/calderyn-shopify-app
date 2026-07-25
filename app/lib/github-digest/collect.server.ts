@@ -33,6 +33,8 @@ export interface CommitInfo {
   login: string;
   branch: string;
   isoDate: string;
+  /** Owner/name of the repo this commit came from — attribution when several are tracked. */
+  repo: string;
 }
 
 export interface PullInfo {
@@ -42,10 +44,15 @@ export interface PullInfo {
   body: string;
   author: string;
   url: string;
+  /** Owner/name of the repo this PR came from — attribution when several are tracked. */
+  repo: string;
 }
 
 export interface Activity {
+  /** Human-readable label: a single "owner/name", or a comma-joined list. */
   repo: string;
+  /** Every repo this activity covers, in configured order. */
+  repos: string[];
   sinceIso: string;
   commits: CommitInfo[];
   mergedPRs: PullInfo[];
@@ -137,13 +144,14 @@ async function searchPRs(
   return Array.isArray(parsed?.items) ? parsed.items : [];
 }
 
-function toPull(item: GhSearchItem): PullInfo {
+function toPull(item: GhSearchItem, repo: string): PullInfo {
   return {
     number: item.number,
     title: item.title,
     body: capBody(item.body),
     author: item.user?.login ?? "unknown",
     url: item.html_url,
+    repo,
   };
 }
 
@@ -187,6 +195,7 @@ export async function collectActivity(opts: {
         login: it.author?.login ?? "",
         branch,
         isoDate: it.commit?.author?.date ?? "",
+        repo,
       });
     }
   }
@@ -201,15 +210,16 @@ export async function collectActivity(opts: {
   try {
     const mergedItems = await searchPRs(repo, `merged:>=${sinceIso}`, token);
     const openedItems = await searchPRs(repo, `created:>=${sinceIso}`, token);
-    mergedPRs = mergedItems.map(toPull);
+    mergedPRs = mergedItems.map((i) => toPull(i, repo));
     const mergedNums = new Set(mergedPRs.map((p) => p.number));
-    openedPRs = openedItems.map(toPull).filter((p) => !mergedNums.has(p.number));
+    openedPRs = openedItems.map((i) => toPull(i, repo)).filter((p) => !mergedNums.has(p.number));
   } catch (err) {
     notes.push(`Pull-request lookup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   return {
     repo,
+    repos: [repo],
     sinceIso,
     commits,
     mergedPRs,
@@ -218,4 +228,80 @@ export async function collectActivity(opts: {
     branchesTotal,
     notes,
   };
+}
+
+/**
+ * Parse the `DIGEST_REPO` env value into a repo list. Accepts one repo or
+ * several separated by commas/whitespace ("a/b, c/d"), trims blanks, and drops
+ * duplicates while preserving configured order.
+ */
+export function parseRepoList(raw: string | undefined): string[] {
+  const parts = (raw ?? "")
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...new Set(parts)];
+}
+
+/** Short display label for a repo: "owner/name" -> "name". */
+export function repoLabel(repo: string): string {
+  const slash = repo.lastIndexOf("/");
+  return slash === -1 ? repo : repo.slice(slash + 1);
+}
+
+export interface MultiRepoActivity {
+  /** All repos' activity merged into one, for grouping/summarizing/rendering. */
+  merged: Activity;
+  /** Per-repo activity in configured order — repos that failed entirely are absent. */
+  perRepo: Activity[];
+}
+
+/**
+ * Collect activity across several repos and merge it into a single Activity.
+ *
+ * Repos are fetched sequentially to stay friendly to GitHub's secondary rate
+ * limits on a shared token. One repo failing outright (bad name, revoked
+ * access, rate limit) degrades to a surfaced note and the remaining repos still
+ * report — it never sinks the whole digest (rule 12). Every note is prefixed
+ * with its repo so a partial result is never mistaken for a complete one.
+ */
+export async function collectMultiRepoActivity(opts: {
+  repos: string[];
+  token: string;
+  sinceMs: number;
+  maxBranches?: number;
+}): Promise<MultiRepoActivity> {
+  const { repos, token, sinceMs, maxBranches } = opts;
+  const sinceIso = new Date(sinceMs).toISOString();
+  const perRepo: Activity[] = [];
+  const notes: string[] = [];
+
+  for (const repo of repos) {
+    try {
+      const activity = await collectActivity({ repo, token, sinceMs, maxBranches });
+      perRepo.push(activity);
+      // Prefix so a note reads unambiguously once several repos are merged.
+      for (const n of activity.notes) notes.push(repos.length > 1 ? `${repo}: ${n}` : n);
+    } catch (err) {
+      notes.push(`${repo}: activity unavailable — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  const commits = perRepo
+    .flatMap((a) => a.commits)
+    .sort((a, b) => b.isoDate.localeCompare(a.isoDate));
+
+  const merged: Activity = {
+    repo: repos.join(", "),
+    repos,
+    sinceIso,
+    commits,
+    mergedPRs: perRepo.flatMap((a) => a.mergedPRs),
+    openedPRs: perRepo.flatMap((a) => a.openedPRs),
+    branchesScanned: perRepo.reduce((n, a) => n + a.branchesScanned, 0),
+    branchesTotal: perRepo.reduce((n, a) => n + a.branchesTotal, 0),
+    notes,
+  };
+
+  return { merged, perRepo };
 }
