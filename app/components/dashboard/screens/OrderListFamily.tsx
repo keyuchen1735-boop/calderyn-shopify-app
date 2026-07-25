@@ -27,6 +27,8 @@ const ASC_FIRST_SORT_COLS = new Set([
   "transfer",
   "sku",
   "kind",
+  "route",
+  "ref",
 ]);
 
 /** State transition for a column-header click, shared by the unified list and the sub-lists so
