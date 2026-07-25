@@ -18,6 +18,9 @@
 // the per-branch listing because commit-search only indexes the default branch.
 
 const GITHUB_API = "https://api.github.com";
+// Search returns at most this many PRs per qualifier; a busier day is reported as
+// a note rather than silently truncated (rule 12), matching the branch-scan cap.
+const PR_SEARCH_PAGE = 50;
 // One GET per branch; 100 keeps a daily run well within the function timeout
 // while covering the repo's branch count with headroom. Anything beyond is
 // recorded in `notes` (never silently dropped).
@@ -130,11 +133,12 @@ async function searchPRs(
   repo: string,
   qualifier: string,
   token: string,
-): Promise<GhSearchItem[]> {
+): Promise<{ items: GhSearchItem[]; totalCount: number }> {
   const q = encodeURIComponent(`repo:${repo} is:pr ${qualifier}`);
-  const raw = await ghGet(`/search/issues?q=${q}&per_page=50`, token);
+  const raw = await ghGet(`/search/issues?q=${q}&per_page=${PR_SEARCH_PAGE}`, token);
   const parsed = raw as GhSearchResponse;
-  return Array.isArray(parsed?.items) ? parsed.items : [];
+  const items = Array.isArray(parsed?.items) ? parsed.items : [];
+  return { items, totalCount: typeof parsed?.total_count === "number" ? parsed.total_count : items.length };
 }
 
 function toPull(item: GhSearchItem): PullInfo {
@@ -199,11 +203,18 @@ export async function collectActivity(opts: {
   let mergedPRs: PullInfo[] = [];
   let openedPRs: PullInfo[] = [];
   try {
-    const mergedItems = await searchPRs(repo, `merged:>=${sinceIso}`, token);
-    const openedItems = await searchPRs(repo, `created:>=${sinceIso}`, token);
-    mergedPRs = mergedItems.map(toPull);
+    const merged = await searchPRs(repo, `merged:>=${sinceIso}`, token);
+    const opened = await searchPRs(repo, `created:>=${sinceIso}`, token);
+    mergedPRs = merged.items.map(toPull);
     const mergedNums = new Set(mergedPRs.map((p) => p.number));
-    openedPRs = openedItems.map(toPull).filter((p) => !mergedNums.has(p.number));
+    openedPRs = opened.items.map(toPull).filter((p) => !mergedNums.has(p.number));
+    for (const [label, res] of [["merged", merged], ["opened", opened]] as const) {
+      if (res.totalCount > res.items.length) {
+        notes.push(
+          `Showing ${res.items.length} of ${res.totalCount} ${label} pull requests (capped at ${PR_SEARCH_PAGE}); some are omitted.`,
+        );
+      }
+    }
   } catch (err) {
     notes.push(`Pull-request lookup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
