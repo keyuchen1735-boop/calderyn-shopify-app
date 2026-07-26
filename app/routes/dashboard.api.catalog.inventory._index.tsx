@@ -13,7 +13,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const { rows, total } = await listInventory(session.shopId, {
       search: url.searchParams.get("search") ?? undefined,
       stock: stock === "low" || stock === "out" ? stock : undefined,
-      offset: Number(url.searchParams.get("offset") ?? 0) || 0,
+      offset: Math.max(0, Math.trunc(Number(url.searchParams.get("offset"))) || 0),
       sort: parseInventorySort(url.searchParams.get("sort")),
       dir: dir === "asc" ? "asc" : "desc",
     });
