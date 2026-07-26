@@ -556,7 +556,11 @@ export async function processStripeEvent(
         if (orderRes.error) throw orderRes.error;
         const orderRow = orderRes.data as Record<string, unknown> | null;
         const currentState = orderRow ? String(orderRow.state) : null;
-        const orderTotalCents = orderRow ? Number(orderRow.total_cents ?? 0) : null;
+        // Keep null as null: coercing a missing total to 0 would defeat the
+        // `!== null` guard below and log a false AMOUNT MISMATCH ("... total is 0")
+        // whenever total_cents is absent, rather than skipping the check.
+        const orderTotalCents =
+          orderRow && orderRow.total_cents != null ? Number(orderRow.total_cents) : null;
 
         // AMOUNT-MISMATCH SENTINEL (fix C2c, rule 12): the PaymentIntent's captured amount should
         // always equal the order's own total_cents — the same total the checkout/invoice path
@@ -611,7 +615,32 @@ async function recoverStrandedPaidOrder(shopId: string, orderRef: string): Promi
     .maybeSingle();
   if (cur.error) throw cur.error;
   if (!cur.data || String((cur.data as Record<string, unknown>).state) !== "checkout_pending") return;
-  await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded:recovery");
+  try {
+    await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded:recovery");
+  } catch (err) {
+    // A concurrent redelivery of this same event can win the checkout_pending->paid
+    // race; the loser's transition then throws an illegal-transition error. That is
+    // benign — the order is already recovered and the winner sends the emails — so
+    // swallow it rather than 500ing the webhook and triggering a needless retry.
+    // Anything else (or a non-paid final state) is re-raised. Mirrors the guard the
+    // first-delivery path applies via handleDuplicateCaptureOrRethrow.
+    const reread = await getSupabase()
+      .from("orders")
+      .select("state")
+      .eq("shop_id", shopId)
+      .eq("id", orderRef)
+      .maybeSingle();
+    const state = reread.data ? String((reread.data as Record<string, unknown>).state) : null;
+    if (
+      err instanceof Error &&
+      /illegal order transition/.test(err.message) &&
+      state !== null &&
+      PAID_LIKE_STATES.has(state)
+    ) {
+      return;
+    }
+    throw err;
+  }
   await sendOrderConfirmation(shopId, orderRef);
   await sendMerchantNewOrderNotice(shopId, orderRef);
 }
