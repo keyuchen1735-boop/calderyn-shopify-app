@@ -56,7 +56,10 @@ export async function listDiscoverFeed(limit = 40, search = ""): Promise<Discove
     .limit(search ? 200 : limit);
   if (error) throw error;
 
-  const terms = search.toLowerCase().split(/\s+/).filter((term) => term.length > 2);
+  // Keep every non-blank token. Dropping short tokens meant a real query like
+  // "tv", "hp" or "3d" produced no terms, so the guard below was skipped and the
+  // whole top-ranked feed came back as if nothing had been typed.
+  const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
   return ((data ?? []) as unknown as FeedRow[]).flatMap((row) => {
     const p = row.source_product;
     if (!p) return [];
@@ -88,6 +91,25 @@ export async function pickProduct(
   sourceProductId: string,
 ): Promise<PickResult> {
   const sb = getSupabase();
+
+  // Idempotency: a re-submitted pick (onboarding import retried after a mid-loop
+  // failure, or a double-click) must not create a second owned product for a
+  // source already imported into this shop. Return the existing product instead.
+  const existingLink = await sb
+    .from("sourced_product_link")
+    .select("product_id")
+    .eq("shop_id", shopId)
+    .eq("source_product_id", sourceProductId)
+    .maybeSingle();
+  if (existingLink.error) throw existingLink.error;
+  if (existingLink.data) {
+    return {
+      productId: String((existingLink.data as { product_id: string }).product_id),
+      storeRunId: null,
+      storeBuildSkipped: "already_picked",
+    };
+  }
+
   const { data: src, error } = await sb
     .from("source_product")
     .select(

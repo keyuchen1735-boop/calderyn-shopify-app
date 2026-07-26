@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   sourceMaybeSingle: vi.fn(),
   mediaInsert: vi.fn(),
   linkInsert: vi.fn(),
+  linkMaybeSingle: vi.fn(),
   createProduct: vi.fn(),
   rateLimit: vi.fn(),
   readPointers: vi.fn(),
@@ -20,7 +21,12 @@ vi.mock("~/lib/supabase.server", () => ({
         return { select: () => ({ eq: () => ({ maybeSingle: mocks.sourceMaybeSingle }) }) };
       }
       if (table === "product_media") return { insert: mocks.mediaInsert };
-      if (table === "sourced_product_link") return { insert: mocks.linkInsert };
+      if (table === "sourced_product_link") {
+        return {
+          select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: mocks.linkMaybeSingle }) }) }),
+          insert: mocks.linkInsert,
+        };
+      }
       if (table === "source_product_score") {
         return { select: () => ({ order: () => ({ limit: mocks.feedLimit }) }) };
       }
@@ -67,6 +73,7 @@ beforeEach(() => {
   mocks.createProduct.mockResolvedValue({ id: "product-1" });
   mocks.mediaInsert.mockResolvedValue({ error: null });
   mocks.linkInsert.mockResolvedValue({ error: null });
+  mocks.linkMaybeSingle.mockResolvedValue({ data: null, error: null });
   mocks.rateLimit.mockResolvedValue(true);
   mocks.readPointers.mockResolvedValue({ draftVersionId: null, publishedVersionId: null });
   mocks.runCommand.mockResolvedValue({ status: "installed", versionId: "version-1", undo: null });
@@ -166,6 +173,18 @@ describe("pickProduct Store command handoff", () => {
       storeRunId: "version-1",
     });
     expect(mocks.runCommand).toHaveBeenCalledOnce();
+  });
+
+  it("is idempotent: a source already imported into the shop is not re-created", async () => {
+    mocks.linkMaybeSingle.mockResolvedValue({ data: { product_id: "product-1" }, error: null });
+    await expect(pickProduct("shop-1", "source-1")).resolves.toEqual({
+      productId: "product-1",
+      storeRunId: null,
+      storeBuildSkipped: "already_picked",
+    });
+    expect(mocks.createProduct).not.toHaveBeenCalled();
+    expect(mocks.linkInsert).not.toHaveBeenCalled();
+    expect(mocks.runCommand).not.toHaveBeenCalled();
   });
 
   it("keeps the picked product and returns a safe skip when release pointers cannot be read", async () => {
