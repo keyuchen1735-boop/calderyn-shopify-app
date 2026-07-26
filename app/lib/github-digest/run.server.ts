@@ -110,7 +110,13 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
 
   const dateLabel = dateLabelET(nowMs);
   const content = await summarize(activity, { dateLabel, signups: waitlist.signups, brand });
-  if (process.env.ANTHROPIC_API_KEY && content.mode === "template") {
+  // The AI overview is only ever attempted when there is git activity to summarize
+  // (a signups-only day renders deterministically and never calls the model), so a
+  // 'template' mode is a genuine AI fallback only in that case. Without this guard a
+  // quiet-code / signups-only day falsely records the AI as having failed.
+  const gitHadActivity =
+    activity.commits.length > 0 || activity.mergedPRs.length > 0 || activity.openedPRs.length > 0;
+  if (process.env.ANTHROPIC_API_KEY && gitHadActivity && content.mode === "template") {
     notes.push("AI summary unavailable — fell back to grouped template.");
   }
 
