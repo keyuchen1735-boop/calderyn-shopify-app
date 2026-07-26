@@ -53,8 +53,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       email: url.searchParams.get("email") ?? "",
       store: url.searchParams.get("store") ?? "",
       // Threaded connector/deep-link destination; carried through signup +
-      // onboarding so an interrupted flow resumes. Validated server-side on use.
-      returnTo: url.searchParams.get("return_to") ?? "",
+      // onboarding so an interrupted flow resumes. Validated here (parity with
+      // login.tsx) as well as at the action, so a hostile value never reaches the form.
+      returnTo: safeDashboardReturnTo(url.searchParams.get("return_to")) ?? "",
       // Marker indicating signup started from the login page's Shopify button.
       fromShopify: url.searchParams.get("from") === "shopify",
       // OAuth provider flows must start on the public apex (their callback host),
