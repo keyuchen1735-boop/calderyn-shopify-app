@@ -259,8 +259,13 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
   const sortParam = parsePoSort(poSort.sort);
   const [loadedFilter, setLoadedFilter] = useState<PoStatusVM | "all">("all");
   const loadedFilterRef = useRef(loadedFilter);
-  const statusFilterRef = useRef(statusFilter);
-  statusFilterRef.current = statusFilter;
+  // The in-flight token for "Load more": it must include the sort, not just the
+  // status filter. A page's offset is only meaningful against the ordering it
+  // was fetched in, so appending a page whose sort changed mid-flight lands rows
+  // at the wrong offset (dropped/out-of-order rows). Mirrors Inventory's guard.
+  const loadToken = JSON.stringify([statusFilter, poSort.sort, poSort.dir]);
+  const loadTokenRef = useRef(loadToken);
+  loadTokenRef.current = loadToken;
 
   // Drawer state (one object — see DrawerState). poId is set on row click;
   // the detail loads after.
@@ -395,6 +400,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
 
   const loadMore = async () => {
     if (!pos) return;
+    const token = loadTokenRef.current;
     setLoadingMore(true);
     try {
       const page = await fetchPoPage(
@@ -405,10 +411,10 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
         sortParam,
         poSort.dir,
       );
-      // The filter changed while this page was in flight — its rows belong to
-      // the previous filter's universe, so appending them would corrupt the
-      // narrowed list (and its total).
-      if (statusFilterRef.current !== statusFilter) return;
+      // The filter OR sort changed while this page was in flight — its rows
+      // belong to the previous query's universe and offset, so appending them
+      // would corrupt the list order (and its total). Discard the stale page.
+      if (loadTokenRef.current !== token) return;
       setPos((cur) => {
         const current = cur ?? [];
         const seen = new Set(current.map((p) => p.id));
