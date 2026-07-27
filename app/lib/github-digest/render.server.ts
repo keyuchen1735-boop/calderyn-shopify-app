@@ -26,8 +26,13 @@ const BRAND = {
   navy: "#1a1a2e",
   mint: "#7ee0c3",
 } as const;
-const REPO_URL = "https://github.com/keyuchen1735-boop/calderyn-shopify-app";
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+/** Footer repo link derived from the digest's actual repo (honors DIGEST_REPO)
+ *  rather than a hardcoded one, so a non-default repo's digest links itself. */
+function repoLink(repo: string): { url: string; label: string } {
+  return { url: `https://github.com/${repo}`, label: repo.split("/")[1] || repo };
+}
 
 export interface Actor {
   key: string;
@@ -230,6 +235,8 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
     ? `<p style="margin:0 0 4px;color:${BRAND.text1};font-size:15px;line-height:1.6">${esc(input.overview)}</p>`
     : "";
 
+  const repo = repoLink(activity.repo);
+
   return `<!doctype html><html><body style="margin:0;padding:0;background:${BRAND.bg}">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.bg};padding:16px">
     <tr><td align="center">
@@ -248,7 +255,7 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
         </td></tr>
         ${waitlistSectionHtml(input.signups ?? [])}
         <tr><td style="padding:16px 26px 24px;border-top:1px solid ${BRAND.border}">
-          <div style="font-size:12px;color:${BRAND.text3}">Automated daily digest · <a href="${REPO_URL}" style="color:${BRAND.text3}">calderyn-shopify-app</a></div>
+          <div style="font-size:12px;color:${BRAND.text3}">Automated daily digest · <a href="${esc(repo.url)}" style="color:${BRAND.text3}">${esc(repo.label)}</a></div>
         </td></tr>
       </table>
     </td></tr>
@@ -281,7 +288,7 @@ export function renderText(activity: Activity, groups: PersonGroup[], input: Ren
     lines.push("");
   }
   for (const n of activity.notes) lines.push(`Note: ${n}`);
-  lines.push("", `Automated daily digest · ${REPO_URL}`);
+  lines.push("", `Automated daily digest · ${repoLink(activity.repo).url}`);
   return lines.join("\n").trimEnd();
 }
 
