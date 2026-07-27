@@ -82,23 +82,32 @@ export async function listInventory(
     dir?: "asc" | "desc";
   } = {},
 ): Promise<{ rows: InventoryRow[]; total: number }> {
-  const { data, error } = await getSupabase().rpc("inventory_list", {
-    p_shop_id: shopId,
-    p_search: opts.search == null ? null : escapeLike(opts.search),
-    p_stock: opts.stock ?? null,
-    p_limit: Math.min(opts.limit ?? 50, 100),
-    p_offset: Math.max(0, opts.offset ?? 0),
-    // A sort key without a direction would match none of the RPC's CASE arms
-    // and silently fall back to the default order, so pair them or send neither.
-    p_sort: opts.sort ?? null,
-    p_dir: opts.sort ? (opts.dir === "asc" ? "asc" : "desc") : null,
-  });
+  const offset = Math.max(0, opts.offset ?? 0);
+  // A sort key without a direction would match none of the RPC's CASE arms
+  // and silently fall back to the default order, so pair them or send neither.
+  const dir = opts.sort ? (opts.dir === "asc" ? "asc" : "desc") : null;
+  const query = (limit: number, off: number) =>
+    getSupabase().rpc("inventory_list", {
+      p_shop_id: shopId,
+      p_search: opts.search == null ? null : escapeLike(opts.search),
+      p_stock: opts.stock ?? null,
+      p_limit: limit,
+      p_offset: off,
+      p_sort: opts.sort ?? null,
+      p_dir: dir,
+    });
+  const { data, error } = await query(Math.min(opts.limit ?? 50, 100), offset);
   if (error) throw error;
   const raw = (data ?? []) as InventoryListRpcRow[];
-  return {
-    rows: raw.map(mapInventoryRow),
-    total: raw.length ? Number(raw[0].total_count) : 0,
-  };
+  if (raw.length) return { rows: raw.map(mapInventoryRow), total: Number(raw[0].total_count) };
+  if (offset === 0) return { rows: [], total: 0 };
+  // Paged past the end (the list shrank between pages): total_count rides on the
+  // rows, so an empty page carries no total. Re-read the first row for an honest
+  // total instead of falsely reporting 0 — mirrors listPurchaseOrders.
+  const head = await query(1, 0);
+  if (head.error) throw head.error;
+  const headRows = (head.data ?? []) as InventoryListRpcRow[];
+  return { rows: [], total: headRows.length ? Number(headRows[0].total_count) : 0 };
 }
 
 const RESTOCK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
