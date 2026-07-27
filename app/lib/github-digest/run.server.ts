@@ -110,7 +110,13 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
 
   const dateLabel = dateLabelET(nowMs);
   const content = await summarize(activity, { dateLabel, signups: waitlist.signups, brand });
-  if (process.env.ANTHROPIC_API_KEY && content.mode === "template") {
+  // The AI prose is only attempted when there IS git activity to summarize, so
+  // the fallback note is only meaningful then. On a signups-only day (no commits
+  // or PRs) the mode is "template" simply because the model was never called —
+  // reporting "AI summary unavailable" there is misleading.
+  const hasGitActivity =
+    activity.commits.length > 0 || activity.mergedPRs.length > 0 || activity.openedPRs.length > 0;
+  if (hasGitActivity && process.env.ANTHROPIC_API_KEY && content.mode === "template") {
     notes.push("AI summary unavailable — fell back to grouped template.");
   }
 
