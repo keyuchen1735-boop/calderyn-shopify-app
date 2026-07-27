@@ -489,6 +489,17 @@ export async function billingStatus(shopId: string): Promise<BillingDTO> {
 export async function expressLoginLink(shopId: string): Promise<{ url: string } | null> {
   const acct = await getConnectedAccount(shopId);
   if (!acct || !acct.details_submitted) return null;
-  const login = await getStripe().accounts.createLoginLink(acct.stripe_account_id);
-  return { url: login.url };
+  try {
+    const login = await getStripe().accounts.createLoginLink(acct.stripe_account_id);
+    return { url: login.url };
+  } catch (err) {
+    // Same dead-account cause startOnboarding/syncAccountStatus already surface:
+    // a raw Stripe throw here would reach the merchant as a generic internal_error.
+    if (isUnknownAccountError(err)) {
+      throw new PayoutAccountError(
+        "Stripe no longer recognizes this payout account. Choose Resume onboarding to set payouts up again.",
+      );
+    }
+    throw asPayoutError(err, "Stripe couldn't open your payout dashboard");
+  }
 }
